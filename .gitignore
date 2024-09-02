@@ -1,3 +1,5 @@
+.venv/
+
 .csconfig/
 _configuration.mk
 

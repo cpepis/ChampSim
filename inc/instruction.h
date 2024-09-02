@@ -43,6 +43,7 @@ struct ooo_model_instr {
   uint64_t ip = 0;
   uint64_t event_cycle = 0;
 
+  bool is_load = 0;
   bool is_branch = 0;
   bool branch_taken = 0;
   bool branch_prediction = 0;
