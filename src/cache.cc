@@ -286,6 +286,12 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
     }
   }
 
+  if constexpr (champsim::sf_debug_print) {
+    fmt::print("[{}] {} instr_id: {} address: {:#x} v_address: {:#x} type: {} local_prefetch: {} cycle: {}\n", NAME, __func__,
+               handle_pkt.instr_id, handle_pkt.address, handle_pkt.v_address,
+               access_type_names.at(champsim::to_underlying(handle_pkt.type)), handle_pkt.prefetch_from_this, current_cycle);
+  }
+
   ++sim_stats.misses[champsim::to_underlying(handle_pkt.type)][handle_pkt.cpu];
 
   return true;
@@ -301,7 +307,13 @@ bool CACHE::handle_write(const tag_lookup_type& handle_pkt)
 
   inflight_writes.emplace_back(handle_pkt, current_cycle);
   inflight_writes.back().event_cycle = current_cycle + (warmup ? 0 : FILL_LATENCY);
-    
+
+  if constexpr (champsim::sf_debug_print) {
+    fmt::print("[{}] {} instr_id: {} address: {:#x} v_address: {:#x} type: {} local_prefetch: {} cycle: {}\n", NAME, __func__, handle_pkt.instr_id,
+               handle_pkt.address, handle_pkt.v_address, access_type_names.at(champsim::to_underlying(handle_pkt.type)), handle_pkt.prefetch_from_this,
+               current_cycle);
+  }
+
   ++sim_stats.misses[champsim::to_underlying(handle_pkt.type)][handle_pkt.cpu];
 
   return true;

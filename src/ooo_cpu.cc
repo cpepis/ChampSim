@@ -361,6 +361,20 @@ long O3_CPU::schedule_instruction()
 
 void O3_CPU::do_scheduling(ooo_model_instr& instr)
 {
+  for (auto& lq_entry : LQ) {
+    if (lq_entry->instr_id == instr.instr_id && lq_entry->fetch_issued) {
+      if constexpr (champsim::sf_debug_print) {
+        fmt::print("[DISPATCH] {} instr_id: {} lq_entry: {} LD_LATENCY: {} lq.fetch_issued_cycle: {} current_cycle: {}\n", __func__, instr.instr_id,
+                   lq_entry->instr_id, LD_LATENCY, lq_entry->fetch_issued_cycle, current_cycle);
+      }
+
+      if (current_cycle >= lq_entry->fetch_issued_cycle + LD_LATENCY) {
+        sim_stats.total_load_misses++;
+        fmt::print("We have a load miss! Total misses so far: {}\n", sim_stats.total_load_misses);
+      }
+    }
+  }
+
   // Mark register dependencies
   for (auto src_reg : instr.source_registers) {
     if (!std::empty(reg_producers[src_reg])) {
@@ -497,6 +511,12 @@ long O3_CPU::operate_lsq()
       if (success) {
         --load_bw;
         lq_entry->fetch_issued = true;
+        lq_entry->fetch_issued_cycle = current_cycle;
+
+        if constexpr (champsim::sf_debug_print) {
+          fmt::print("[LQ] {} instr_id: {} vaddr: {:#x} fetch_issued at cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address,
+                     lq_entry->fetch_issued_cycle);
+        }
       }
     }
   }
