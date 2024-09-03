@@ -370,11 +370,11 @@ void O3_CPU::do_scheduling(ooo_model_instr& instr)
         instr.num_reg_dependent++;
       }
 
-      if constexpr (champsim::my_debug) {
+      if constexpr (champsim::sf_debug_print) {
         fmt::print("[DISPATCH] {} instr_id: {} depends on: {} load: {}\n", __func__, instr.instr_id, prior.instr_id, prior.is_load);
       }
 
-      if constexpr (champsim::my_debug) {
+      if constexpr (champsim::sf_debug_print) {
         fmt::print("[DISPATCH] {} instr_id: {} src_reg: {} dst_reg: {}\n", __func__, instr.instr_id, src_reg, instr.destination_registers);
       }
     }

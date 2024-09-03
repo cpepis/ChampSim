@@ -35,6 +35,7 @@ core_builder_parts = {
     'dispatch_width': '.dispatch_width({dispatch_width})',
     'schedule_size': '.schedule_width({scheduler_size})',
     'execute_width': '.execute_width({execute_width})',
+    'ld_latency': '.ld_latency({ld_latency})',
     'lq_width': '.lq_width({lq_width})',
     'sq_width': '.sq_width({sq_width})',
     'retire_width': '.retire_width({retire_width})',

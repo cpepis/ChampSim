@@ -32,6 +32,7 @@ const auto default_core = O3_CPU::Builder{}
                               .decode_buffer_size(32)
                               .dispatch_buffer_size(32)
                               .rob_size(352)
+                              .ld_latency(4)
                               .lq_size(128)
                               .sq_size(72)
                               .fetch_width(6)

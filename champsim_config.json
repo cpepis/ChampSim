@@ -18,6 +18,7 @@
             "decode_width": 6,
             "dispatch_width": 6,
             "execute_width": 4,
+            "ld_latency": 4,
             "lq_width": 2,
             "sq_width": 2,
             "retire_width": 5,

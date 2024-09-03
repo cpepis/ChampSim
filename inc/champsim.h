@@ -33,11 +33,11 @@ constexpr bool debug_print = true;
 constexpr bool debug_print = false;
 #endif
 
-#define MY_DEBUG
-#ifdef MY_DEBUG
-constexpr bool my_debug = true;
+#define SF_DEBUG
+#ifdef SF_DEBUG
+constexpr bool sf_debug_print = true;
 #else
-constexpr bool my_debug = false;
+constexpr bool sf_debug_print = false;
 #endif
 
 } // namespace champsim
