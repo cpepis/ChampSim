@@ -29,9 +29,9 @@
 #include <memory>
 #include <optional>
 #include <queue>
+#include <set>
 #include <stdexcept>
 #include <vector>
-#include <set>
 
 #include "champsim.h"
 #include "champsim_constants.h"
@@ -287,10 +287,11 @@ public:
           m_ifetch_buffer_size(other.m_ifetch_buffer_size), m_decode_buffer_size(other.m_decode_buffer_size),
           m_dispatch_buffer_size(other.m_dispatch_buffer_size), m_rob_size(other.m_rob_size), m_lq_size(other.m_lq_size), m_sq_size(other.m_sq_size),
           m_fetch_width(other.m_fetch_width), m_decode_width(other.m_decode_width), m_dispatch_width(other.m_dispatch_width),
-          m_schedule_width(other.m_schedule_width), m_execute_width(other.m_execute_width), m_ld_latency(other.m_ld_latency), m_lq_width(other.m_lq_width), m_sq_width(other.m_sq_width),
-          m_retire_width(other.m_retire_width), m_mispredict_penalty(other.m_mispredict_penalty), m_decode_latency(other.m_decode_latency),
-          m_dispatch_latency(other.m_dispatch_latency), m_schedule_latency(other.m_schedule_latency), m_execute_latency(other.m_execute_latency),
-          m_l1i(other.m_l1i), m_l1i_bw(other.m_l1i_bw), m_l1d_bw(other.m_l1d_bw), m_fetch_queues(other.m_fetch_queues), m_data_queues(other.m_data_queues)
+          m_schedule_width(other.m_schedule_width), m_execute_width(other.m_execute_width), m_ld_latency(other.m_ld_latency), m_lq_width(other.m_lq_width),
+          m_sq_width(other.m_sq_width), m_retire_width(other.m_retire_width), m_mispredict_penalty(other.m_mispredict_penalty),
+          m_decode_latency(other.m_decode_latency), m_dispatch_latency(other.m_dispatch_latency), m_schedule_latency(other.m_schedule_latency),
+          m_execute_latency(other.m_execute_latency), m_l1i(other.m_l1i), m_l1i_bw(other.m_l1i_bw), m_l1d_bw(other.m_l1d_bw),
+          m_fetch_queues(other.m_fetch_queues), m_data_queues(other.m_data_queues)
     {
     }
 
@@ -465,10 +466,11 @@ public:
       : champsim::operable(b.m_freq_scale), cpu(b.m_cpu), DIB(b.m_dib_set, b.m_dib_way, {champsim::lg2(b.m_dib_window)}, {champsim::lg2(b.m_dib_window)}),
         LQ(b.m_lq_size), IFETCH_BUFFER_SIZE(b.m_ifetch_buffer_size), DISPATCH_BUFFER_SIZE(b.m_dispatch_buffer_size), DECODE_BUFFER_SIZE(b.m_decode_buffer_size),
         ROB_SIZE(b.m_rob_size), SQ_SIZE(b.m_sq_size), FETCH_WIDTH(b.m_fetch_width), DECODE_WIDTH(b.m_decode_width), DISPATCH_WIDTH(b.m_dispatch_width),
-        SCHEDULER_SIZE(b.m_schedule_width), EXEC_WIDTH(b.m_execute_width), LD_LATENCY(b.m_ld_latency), LQ_WIDTH(b.m_lq_width), SQ_WIDTH(b.m_sq_width), RETIRE_WIDTH(b.m_retire_width),
-        BRANCH_MISPREDICT_PENALTY(b.m_mispredict_penalty), DISPATCH_LATENCY(b.m_dispatch_latency), DECODE_LATENCY(b.m_decode_latency),
-        SCHEDULING_LATENCY(b.m_schedule_latency), EXEC_LATENCY(b.m_execute_latency), L1I_BANDWIDTH(b.m_l1i_bw), L1D_BANDWIDTH(b.m_l1d_bw),
-        L1I_bus(b.m_cpu, b.m_fetch_queues), L1D_bus(b.m_cpu, b.m_data_queues), l1i(b.m_l1i), module_pimpl(std::make_unique<module_model<B_FLAG, T_FLAG>>(this))
+        SCHEDULER_SIZE(b.m_schedule_width), EXEC_WIDTH(b.m_execute_width), LD_LATENCY(b.m_ld_latency), LQ_WIDTH(b.m_lq_width), SQ_WIDTH(b.m_sq_width),
+        RETIRE_WIDTH(b.m_retire_width), BRANCH_MISPREDICT_PENALTY(b.m_mispredict_penalty), DISPATCH_LATENCY(b.m_dispatch_latency),
+        DECODE_LATENCY(b.m_decode_latency), SCHEDULING_LATENCY(b.m_schedule_latency), EXEC_LATENCY(b.m_execute_latency), L1I_BANDWIDTH(b.m_l1i_bw),
+        L1D_BANDWIDTH(b.m_l1d_bw), L1I_bus(b.m_cpu, b.m_fetch_queues), L1D_bus(b.m_cpu, b.m_data_queues), l1i(b.m_l1i),
+        module_pimpl(std::make_unique<module_model<B_FLAG, T_FLAG>>(this))
   {
   }
 };
