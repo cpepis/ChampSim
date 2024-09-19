@@ -68,7 +68,7 @@ struct cpu_stats {
   uint64_t end_instrs = 0, end_cycles = 0;
   uint64_t total_rob_occupancy_at_branch_mispredict = 0;
 
-  uint64_t total_load_misses = 0;
+  uint64_t detected_load_misses = 0;
 
   std::array<long long, 8> total_branch_types = {};
   std::array<long long, 8> branch_type_misses = {};
@@ -84,6 +84,8 @@ struct LSQ_ENTRY {
   uint64_t event_cycle = 0;
 
   std::array<uint8_t, 2> asid = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
+  bool warmup = false;
+  bool finished = false;
   bool fetch_issued = false;
   uint64_t fetch_issued_cycle = 0;
 

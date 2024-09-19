@@ -49,6 +49,9 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
   for (auto [str, idx] : types)
     fmt::print(stream, "{}: {:.3}\n", str, mpkis[idx]);
   fmt::print(stream, "\n");
+
+  fmt::print(stream, "Dedected Load Misses: {}\n", stats.detected_load_misses);
+  fmt::print(stream, "\n");
 }
 
 void champsim::plain_printer::print(CACHE::stats_type stats)
