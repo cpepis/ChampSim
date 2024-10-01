@@ -517,13 +517,16 @@ long O3_CPU::operate_lsq()
         }
 
         // [WIP] Reschedule the instructions after this load if the instruction is not issued but is scheduled
-        for (auto& instr : ROB) {
-          if (instr.instr_id > lq_entry->instr_id && instr.scheduled == COMPLETED && instr.executed != COMPLETED && instr.event_cycle > lq_entry->fetch_issued_cycle) {
-            auto prev_event_cycle = instr.event_cycle;
-            instr.event_cycle = std::max(instr.event_cycle, current_cycle + LD_LATENCY);
+        if (enable_scheduling_flush) {
+          for (auto& instr : ROB) {
+            if (instr.instr_id > lq_entry->instr_id && instr.scheduled == COMPLETED && instr.executed != COMPLETED
+                && instr.event_cycle > lq_entry->fetch_issued_cycle) {
+              auto prev_event_cycle = instr.event_cycle;
+              instr.event_cycle = std::max(instr.event_cycle, current_cycle + LD_LATENCY);
 
-            if constexpr (champsim::sf_debug_print) {
-              fmt::print("[SF] {} instr_id: {} prev_event_cycle: {} new_event_cycle: {}\n", __func__, instr.instr_id, prev_event_cycle, instr.event_cycle);
+              if constexpr (champsim::sf_debug_print) {
+                fmt::print("[SF] {} instr_id: {} prev_event_cycle: {} new_event_cycle: {}\n", __func__, instr.instr_id, prev_event_cycle, instr.event_cycle);
+              }
             }
           }
         }

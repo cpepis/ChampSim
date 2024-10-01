@@ -115,6 +115,7 @@ public:
   uint64_t num_retired = 0;
 
   bool show_heartbeat = true;
+  bool enable_scheduling_flush = false;
 
   using stats_type = cpu_stats;
 

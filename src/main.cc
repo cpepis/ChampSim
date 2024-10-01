@@ -52,8 +52,16 @@ int main(int argc, char** argv)
       cpu.show_heartbeat = false;
   };
 
+  auto set_scheduling_flush_callback = [&](auto) {
+    for (O3_CPU& cpu : gen_environment.cpu_view()) {
+      cpu.enable_scheduling_flush = true;
+      fmt::print("Scheduling flush enabled\n");
+    }
+  };
+
   app.add_flag("-c,--cloudsuite", knob_cloudsuite, "Read all traces using the cloudsuite format");
   app.add_flag("--hide-heartbeat", set_heartbeat_callback, "Hide the heartbeat output");
+  app.add_flag("--scheduling-flush", set_scheduling_flush_callback, "Enable Scheduling Flush");
   auto warmup_instr_option = app.add_option("-w,--warmup-instructions", warmup_instructions, "The number of instructions in the warmup phase");
   auto deprec_warmup_instr_option =
       app.add_option("--warmup_instructions", warmup_instructions, "[deprecated] use --warmup-instructions instead")->excludes(warmup_instr_option);
