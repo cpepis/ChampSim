@@ -539,14 +539,14 @@ long O3_CPU::operate_lsq()
 
 void O3_CPU::do_finish_store(const LSQ_ENTRY& sq_entry)
 {
-  sq_entry.finish(std::begin(ROB), std::end(ROB));
+  sq_entry.finish(std::begin(ROB), std::end(ROB), current_cycle);
 
   // Release dependent loads
   for (std::optional<LSQ_ENTRY>& dependent : sq_entry.lq_depend_on_me) {
     assert(dependent.has_value()); // LQ entry is still allocated
     assert(dependent->producer_id == sq_entry.instr_id);
 
-    dependent->finish(std::begin(ROB), std::end(ROB));
+    dependent->finish(std::begin(ROB), std::end(ROB), current_cycle);
     dependent.reset();
   }
 }
@@ -650,7 +650,7 @@ long O3_CPU::handle_memory_return()
   for (auto l1d_bw = L1D_BANDWIDTH; l1d_bw > 0 && l1d_it != std::end(L1D_bus.lower_level->returned); --l1d_bw, ++l1d_it) {
     for (auto& lq_entry : LQ) {
       if (lq_entry.has_value() && lq_entry->fetch_issued && lq_entry->virtual_address >> LOG2_BLOCK_SIZE == l1d_it->v_address >> LOG2_BLOCK_SIZE) {
-        lq_entry->finish(std::begin(ROB), std::end(ROB));
+        lq_entry->finish(std::begin(ROB), std::end(ROB), current_cycle);
         lq_entry->finished = true;
         lq_entry.reset();
         ++progress;
@@ -724,7 +724,7 @@ LSQ_ENTRY::LSQ_ENTRY(uint64_t id, uint64_t addr, uint64_t local_ip, std::array<u
 {
 }
 
-void LSQ_ENTRY::finish(std::deque<ooo_model_instr>::iterator begin, std::deque<ooo_model_instr>::iterator end) const
+void LSQ_ENTRY::finish(std::deque<ooo_model_instr>::iterator begin, std::deque<ooo_model_instr>::iterator end, uint64_t current_cycle) const
 {
   auto rob_entry = std::partition_point(begin, end, [id = this->instr_id](auto x) { return x.instr_id < id; });
   assert(rob_entry != end);
@@ -734,8 +734,8 @@ void LSQ_ENTRY::finish(std::deque<ooo_model_instr>::iterator begin, std::deque<o
   assert(rob_entry->completed_mem_ops <= rob_entry->num_mem_ops());
 
   if constexpr (champsim::debug_print) {
-    fmt::print("[LSQ] {} instr_id: {} full_address: {:#x} remain_mem_ops: {} event_cycle: {}\n", __func__, instr_id, virtual_address,
-               rob_entry->num_mem_ops() - rob_entry->completed_mem_ops, event_cycle);
+    fmt::print("[LSQ] {} instr_id: {} full_address: {:#x} remain_mem_ops: {} event_cycle: {} current_cycle: {}\n", __func__, instr_id, virtual_address,
+               rob_entry->num_mem_ops() - rob_entry->completed_mem_ops, event_cycle, current_cycle);
   }
 }
 

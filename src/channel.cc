@@ -144,6 +144,11 @@ bool champsim::channel::add_rq(const request_type& packet)
 
   auto result = do_add_queue(RQ, RQ_SIZE, packet);
 
+  if constexpr (champsim::debug_print) {
+    fmt::print("[channel] {} instr_id: {} address: {:#x} v_address: {:#x} type: {} size: {} max_size: {} cache_line: {:#x}\n", __func__, packet.instr_id, packet.address, packet.v_address,
+        access_type_names.at(champsim::to_underlying(packet.type)), std::size(RQ), RQ_SIZE, (packet.address & -64));
+  }
+
   if (result)
     sim_stats.RQ_TO_CACHE++;
   else
@@ -157,6 +162,11 @@ bool champsim::channel::add_wq(const request_type& packet)
   sim_stats.WQ_ACCESS++;
 
   auto result = do_add_queue(WQ, WQ_SIZE, packet);
+
+  if constexpr (champsim::debug_print) {
+    fmt::print("[channel] {} instr_id: {} address: {:#x} v_address: {:#x} type: {} size: {} max_size: {}\n", __func__, packet.instr_id, packet.address, packet.v_address,
+        access_type_names.at(champsim::to_underlying(packet.type)), std::size(WQ), WQ_SIZE);
+  }
 
   if (result)
     sim_stats.WQ_TO_CACHE++;
@@ -172,6 +182,12 @@ bool champsim::channel::add_pq(const request_type& packet)
 
   auto fwd_pkt = packet;
   auto result = do_add_queue(PQ, PQ_SIZE, fwd_pkt);
+
+  if constexpr (champsim::debug_print) {
+    fmt::print("[channel] {} instr_id: {} address: {:#x} v_address: {:#x} type: {} size: {} max_size: {}\n", __func__, packet.instr_id, packet.address, packet.v_address,
+        access_type_names.at(champsim::to_underlying(packet.type)), std::size(PQ), PQ_SIZE);
+  }
+
   if (result)
     sim_stats.PQ_TO_CACHE++;
   else
