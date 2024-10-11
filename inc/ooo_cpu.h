@@ -84,8 +84,6 @@ struct LSQ_ENTRY {
   uint64_t event_cycle = 0;
 
   std::array<uint8_t, 2> asid = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
-  bool warmup = false;
-  bool finished = false;
   bool fetch_issued = false;
   uint64_t fetch_issued_cycle = 0;
 
