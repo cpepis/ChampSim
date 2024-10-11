@@ -1,0 +1,34 @@
+#!/bin/bash
+
+##ENVIRONMENT SETTINGS; CHANGE WITH CAUTION
+#SBATCH --export=NONE                # Do not propagate environment
+#SBATCH --get-user-env=L             # Replicate login environment
+
+##NECESSARY JOB SPECIFICATIONS
+#SBATCH --account=#account
+#SBATCH --time=3:00:00
+#SBATCH --nodes=1
+#SBATCH --mem=500M
+
+##OPTIONAL JOB SPECIFICATIONS
+#SBATCH --mail-type=FAIL
+#SBATCH --mail-user=#email
+
+exec -a "watcher"
+
+# Check the number of jobs
+num_jobs=$(squeue -u $USER | wc -l)
+
+# Wait until all jobs are done
+while [ $num_jobs -gt 2 ]
+do
+    sleep 60
+    num_jobs=$(squeue -u $USER | wc -l)
+done
+
+# Send an email when all jobs are done
+{
+    echo Subject: Job Status.
+    echo 
+    echo All jobs are done
+} | sendmail -t #email

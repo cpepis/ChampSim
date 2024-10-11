@@ -1,0 +1,28 @@
+#!/bin/bash
+
+##ENVIRONMENT SETTINGS; CHANGE WITH CAUTION
+#SBATCH --export=NONE                # Do not propagate environment
+#SBATCH --get-user-env=L             # Replicate login environment
+
+##NECESSARY JOB SPECIFICATIONS
+#SBATCH --account=#account
+#SBATCH --time=3:00:00
+#SBATCH --nodes=1
+#SBATCH --mem=32G
+
+##OPTIONAL JOB SPECIFICATIONS
+#SBATCH --mail-type=FAIL
+#SBATCH --mail-user=#email
+
+module load GCCcore/10.2.0
+
+## champsim_command
+
+eval $champsim_command
+if [ $? -ne 0 ]; then
+    {
+        echo Subject: ChampSim failed.
+        echo
+        echo champsim_command: $champsim_command
+    } | sendmail -t #email
+fi
