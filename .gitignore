@@ -7,10 +7,6 @@ _configuration.mk
 *.pyc
 
 bin/
-bl-data/
-bl-logs/
-sf-data/
-sf-logs/
 jobs/*.bak
 
 **/*.o
