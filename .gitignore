@@ -21,5 +21,4 @@ vcpkg_installed/
 **/_build
 **/_doxygen
 
-no_flush*/
-scheduling_flush*/
+results/
