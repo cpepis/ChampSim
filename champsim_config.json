@@ -18,7 +18,7 @@
             "decode_width": 12,
             "dispatch_width": 12,
             "execute_width": 12,
-            "ld_latency": 5,
+            "ld_latency": 1,
             "lq_width": 2,
             "sq_width": 2,
             "retire_width": 12,
@@ -26,7 +26,7 @@
             "scheduler_size": 512,
             "decode_latency": 3,
             "dispatch_latency": 5,
-            "schedule_latency": 0,
+            "schedule_latency": 5,
             "execute_latency": 1,
             "branch_predictor": "hashed_perceptron",
             "btb": "basic_btb"
