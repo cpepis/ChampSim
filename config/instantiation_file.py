@@ -35,7 +35,6 @@ core_builder_parts = {
     'dispatch_width': '.dispatch_width({dispatch_width})',
     'schedule_size': '.schedule_width({scheduler_size})',
     'execute_width': '.execute_width({execute_width})',
-    'ld_latency': '.ld_latency({ld_latency})',
     'lq_width': '.lq_width({lq_width})',
     'sq_width': '.sq_width({sq_width})',
     'retire_width': '.retire_width({retire_width})',
@@ -194,6 +193,7 @@ def get_instantiation_lines(cores, caches, ptws, pmem, vmem):
         yield '.l1i(&{L1I})'.format(**cpu)
         yield '.l1i_bandwidth({L1I}.MAX_TAG)'.format(**cpu)
         yield '.l1d_bandwidth({L1D}.MAX_TAG)'.format(**cpu)
+        yield '.l1d_latency({L1D}.HIT_LATENCY)'.format(**cpu)
 
         yield from (v.format(**cpu) for k,v in core_builder_parts.items() if k in cpu)
         yield from (v.format(**cpu['DIB']) for k,v in dib_builder_parts.items() if k in cpu)

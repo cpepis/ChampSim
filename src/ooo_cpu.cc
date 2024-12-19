@@ -642,7 +642,7 @@ long O3_CPU::handle_memory_return()
           fmt::print("[LQ] {} instr_id: {} vaddr: {:#x} finished at cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address, current_cycle);
         }
 
-        if (enable_scheduling_flush && current_cycle > lq_entry->fetch_issued_cycle + LD_LATENCY) {
+        if (enable_scheduling_flush && current_cycle > lq_entry->fetch_issued_cycle + L1D_LATENCY) {
           for (auto& rob_instr : ROB) {
             if (rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED) {
               rob_instr.scheduled = 0;
@@ -651,7 +651,7 @@ long O3_CPU::handle_memory_return()
 
               if constexpr (champsim::sf_debug_print) {
                 fmt::print("[SF] {} instr_id: {} is going to be rescheduled as the fetch issued cycle: {} + LD_LATENCY: {} < current_cycle: {}\n", __func__,
-                           rob_instr.instr_id, lq_entry->fetch_issued_cycle, LD_LATENCY, current_cycle);
+                           rob_instr.instr_id, lq_entry->fetch_issued_cycle, L1D_LATENCY, current_cycle);
               }
             }
           }
