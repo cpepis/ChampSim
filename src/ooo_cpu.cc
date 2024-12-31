@@ -663,14 +663,16 @@ long O3_CPU::handle_memory_return()
           sim_stats.detected_load_misses++;
           for (auto& rob_instr : ROB) {
             if (rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED) {
-              rob_instr.rescheduled = INFLIGHT;
-              rob_instr.scheduled = 0;
-              rob_instr.executed = 0;
-              rob_instr.event_cycle = current_cycle;
+              if (!reschedule_only_branches || rob_instr.is_branch) {
+                rob_instr.rescheduled = INFLIGHT;
+                rob_instr.scheduled = 0;
+                rob_instr.executed = 0;
+                rob_instr.event_cycle = current_cycle;
 
-              if constexpr (champsim::sf_debug_print) {
-                fmt::print("[SF] {} instr_id: {} is going to be rescheduled as the fetch issued cycle: {} + LD_LATENCY: {} < current_cycle: {}\n", __func__,
-                           rob_instr.instr_id, lq_entry->fetch_issued_cycle, L1D_LATENCY, current_cycle);
+                if constexpr (champsim::sf_debug_print) {
+                  fmt::print("[SF] {} instr_id: {} is going to be rescheduled as the fetch issued cycle: {} + LD_LATENCY: {} < current_cycle: {}\n", __func__,
+                             rob_instr.instr_id, lq_entry->fetch_issued_cycle, L1D_LATENCY, current_cycle);
+                }
               }
             }
           }

@@ -120,6 +120,7 @@ public:
 
   bool show_heartbeat = true;
   bool enable_scheduling_flush = false;
+  bool reschedule_only_branches = false;
 
   using stats_type = cpu_stats;
 
