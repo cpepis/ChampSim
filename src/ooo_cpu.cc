@@ -347,7 +347,7 @@ long O3_CPU::schedule_instruction()
   auto search_bw = SCHEDULER_SIZE;
   int progress{0};
   for (auto rob_it = std::begin(ROB); rob_it != std::end(ROB) && search_bw > 0; ++rob_it) {
-    if (rob_it->scheduled == 0) {
+    if (rob_it->scheduled == 0 || rob_it->rescheduled == INFLIGHT) {
       do_scheduling(*rob_it);
       ++progress;
     }
@@ -389,9 +389,20 @@ void O3_CPU::do_scheduling(ooo_model_instr& instr)
     }
   }
 
-  if (enable_scheduling_flush && instr.already_set_dependences) {
+  if (enable_scheduling_flush && instr.already_set_dependences && instr.rescheduled == INFLIGHT) {
     auto prev_event_cycle = instr.event_cycle;
     instr.event_cycle = std::max(instr.event_cycle, current_cycle + (warmup ? 0 : SCHEDULING_LATENCY));
+
+    if (instr.is_load) {
+      sim_stats.rescheduled_loads++;
+    } else if (instr.is_branch) {
+      sim_stats.rescheduled_branches[instr.branch_type]++;
+    } else {
+      sim_stats.rescheduled_other_instrs++;
+    }
+    sim_stats.rescheduled_total_instrs++;
+    instr.rescheduled = COMPLETED;
+
     if constexpr (champsim::sf_debug_print) {
       fmt::print("[SF] {} Rescheduling instr_id: {} event_cycle: {} -> {}\n", __func__, instr.instr_id, prev_event_cycle, instr.event_cycle);
     }
@@ -408,6 +419,12 @@ long O3_CPU::execute_instruction()
   auto exec_bw = EXEC_WIDTH;
   for (auto rob_it = std::begin(ROB); rob_it != std::end(ROB) && exec_bw > 0; ++rob_it) {
     if (rob_it->scheduled == COMPLETED && rob_it->executed == 0 && rob_it->num_reg_dependent == 0 && rob_it->event_cycle <= current_cycle) {
+
+      if (enable_scheduling_flush && rob_it->rescheduled == INFLIGHT) {
+        sim_stats.deferred_execution_instrs++;
+        continue;
+      }
+
       do_execution(*rob_it);
       --exec_bw;
     }
@@ -643,8 +660,10 @@ long O3_CPU::handle_memory_return()
         }
 
         if (enable_scheduling_flush && current_cycle > lq_entry->fetch_issued_cycle + L1D_LATENCY) {
+          sim_stats.detected_load_misses++;
           for (auto& rob_instr : ROB) {
             if (rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED) {
+              rob_instr.rescheduled = INFLIGHT;
               rob_instr.scheduled = 0;
               rob_instr.executed = 0;
               rob_instr.event_cycle = current_cycle;
@@ -667,7 +686,7 @@ long O3_CPU::handle_memory_return()
 
 long O3_CPU::retire_rob()
 {
-  auto [retire_begin, retire_end] = champsim::get_span_p(std::cbegin(ROB), std::cend(ROB), RETIRE_WIDTH, [](const auto& x) { return x.executed == COMPLETED; });
+  auto [retire_begin, retire_end] = champsim::get_span_p(std::cbegin(ROB), std::cend(ROB), RETIRE_WIDTH, [](const auto& x) { return x.executed == COMPLETED && x.rescheduled != INFLIGHT; });
   if constexpr (champsim::debug_print) {
     std::for_each(retire_begin, retire_end, [cycle = current_cycle](const auto& x) { fmt::print("[ROB] retire_rob instr_id: {} is retired cycle: {}\n", x.instr_id, cycle); });
   }
@@ -684,11 +703,11 @@ void O3_CPU::print_deadlock()
   fmt::print("DEADLOCK! CPU {} cycle {}\n", cpu, current_cycle);
 
   auto instr_pack = [](const auto& entry) {
-    return std::tuple{entry.instr_id,   +entry.fetched,           +entry.scheduled,
+    return std::tuple{entry.instr_id,   +entry.fetched,           +entry.scheduled, +entry.rescheduled,
                       +entry.executed,  +entry.num_reg_dependent, entry.num_mem_ops() - entry.completed_mem_ops,
                       entry.event_cycle};
   };
-  std::string_view instr_fmt{"instr_id: {} fetched: {} scheduled: {} executed: {} num_reg_dependent: {} num_mem_ops: {} event: {}"};
+  std::string_view instr_fmt{"instr_id: {} fetched: {} scheduled: {} rescheduled: {} executed: {} num_reg_dependent: {} num_mem_ops: {} event: {}"};
   champsim::range_print_deadlock(IFETCH_BUFFER, "cpu" + std::to_string(cpu) + "_IFETCH", instr_fmt, instr_pack);
   champsim::range_print_deadlock(DECODE_BUFFER, "cpu" + std::to_string(cpu) + "_DECODE", instr_fmt, instr_pack);
   champsim::range_print_deadlock(DISPATCH_BUFFER, "cpu" + std::to_string(cpu) + "_DISPATCH", instr_fmt, instr_pack);

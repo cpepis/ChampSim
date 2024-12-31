@@ -69,6 +69,12 @@ struct cpu_stats {
   uint64_t total_rob_occupancy_at_branch_mispredict = 0;
 
   uint64_t detected_load_misses = 0;
+  uint64_t deferred_execution_instrs  = 0;
+
+  uint64_t rescheduled_loads = 0;
+  uint64_t rescheduled_other_instrs = 0;
+  uint64_t rescheduled_total_instrs = 0;
+  std::array<long long, 8> rescheduled_branches = {};
 
   std::array<long long, 8> total_branch_types = {};
   std::array<long long, 8> branch_type_misses = {};

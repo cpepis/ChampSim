@@ -51,6 +51,13 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
   fmt::print(stream, "\n");
 
   fmt::print(stream, "Dedected Load Misses: {}\n", stats.detected_load_misses);
+  fmt::print(stream, "Deferred Execution Instructions: {}\n", stats.deferred_execution_instrs);
+  fmt::print(stream, "Rescheduled Total Instructions: {}\n", stats.rescheduled_total_instrs);
+  fmt::print(stream, "Rescheduled Other Instructions: {}\n", stats.rescheduled_other_instrs);
+  fmt::print(stream, "Rescheduled Loads: {}\n", stats.rescheduled_loads);
+  fmt::print(stream, "Rescheduled Branches by Type\n");
+  for (auto [str, idx] : types)
+    fmt::print(stream, "{}: {}\n", str, stats.rescheduled_branches[idx]);
   fmt::print(stream, "\n");
 }
 
