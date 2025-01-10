@@ -62,6 +62,9 @@ for trace in $(ls ../traces/*.xz); do
 
     champsim_command="'./bin/champsim --warmup-instructions 10000000 --simulation-instructions 100000000 --scheduling-flush ${trace} > sf-data/${trace_name}.txt'"
     job_submition "sf"
+
+    champsim_command="'./bin/champsim --warmup-instructions 10000000 --simulation-instructions 100000000 --scheduling-flush --reschedule-only-branches ${trace} > ro-data/${trace_name}.txt'"
+    job_submition "ro"
 done
 
 start_watcher
