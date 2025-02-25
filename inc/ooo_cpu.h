@@ -74,21 +74,37 @@ struct cpu_stats {
   uint64_t is_prefetch_skipped = 0;
   uint64_t is_prefetch_insts = 0;
   uint64_t wrong_path_insts_executed = 0;
+
   uint64_t fetch_idle_cycles = 0;
+  uint64_t decode_idle_cycles = 0;
+  uint64_t dispatch_idle_cycles = 0;
+  uint64_t schedule_idle_cycles = 0;
+  uint64_t execute_idle_cycles = 0;
+  uint64_t rob_idle_cycles = 0;
+
+  uint64_t fetch_starve_cycles = 0;
+  uint64_t decode_starve_cycles = 0;  
+  uint64_t dispatch_starve_cycles = 0;
+  uint64_t schedule_starve_cycles = 0;
+  uint64_t execute_starve_cycles = 0;
+  uint64_t rob_starve_cycles = 0;
+
+  uint64_t ifetch_buffer_full = 0;
+  uint64_t input_queue_empty = 0;
+
+  uint64_t no_new_fetch = 0;
+  uint64_t new_fetch = 0;
+  uint64_t fetch_resume_max = 0;
+  uint64_t times_fetch_resume_less_than_current_cycle = 0;
+
   uint64_t fetch_failed_events = 0;
   uint64_t fetch_buffer_not_empty = 0;
   uint64_t fetch_blocked_cycles = 0;
-  uint64_t decode_idle_cycles = 0;
-  uint64_t execute_idle_cycles = 0;
   uint64_t execute_none_cycles = 0;
   uint64_t execute_head_not_ready = 0;
   uint64_t execute_head_not_completed = 0;
   uint64_t execute_pending_cycles = 0;
   uint64_t execute_load_blocked_cycles = 0;
-  uint64_t sched_idle_cycles = 0;
-  uint64_t sched_none_cycles = 0;
-  uint64_t dispatch_idle_cycles = 0;
-  uint64_t rob_idle_cycles = 0;
   uint64_t loads = 0;
   uint64_t loads_executed = 0;
   uint64_t loads_retired = 0;
@@ -97,7 +113,23 @@ struct cpu_stats {
   uint64_t wrong_path_loads = 0;
   uint64_t wrong_path_loads_executed = 0;
   uint64_t non_branch_squashes = 0;
-  uint64_t fetch_mispred_block_cycles = 0; 
+  uint64_t fetch_mispred_block_cycles = 0;
+
+  uint64_t fetch_resume_cycle_max = 0;
+  uint64_t available_decode_bandwidth = 0;
+  uint64_t no_available_decode_bandwidth = 0;
+  uint64_t progressZ_ifetch_buffer_empty = 0;
+  uint64_t progressZ_ifetch_buffer_not_empty = 0;
+  uint64_t progressZ_ifetch_buffer_last_issued = 0;
+  uint64_t progressZ_ifetch_buffer_last_not_issued = 0;
+  uint64_t ifetch_buffer_empty_on_lack_wrong_path = 0;
+
+  uint64_t fetch_blocked_cycles_at_160 = 0;
+  uint64_t fetch_blocked_cycles_at_299 = 0;
+  uint64_t fetch_blocked_cycles_at_328 = 0;
+  uint64_t fetch_blocked_cycles_at_456 = 0;
+  uint64_t fetch_blocked_cycles_at_658 = 0;
+  uint64_t fetch_blocked_cycles_at_1052 = 0;
 
   uint64_t lack_of_WP_inst_count = 0;
   uint64_t lack_of_WP_inst_cycles = 0; 
@@ -161,6 +193,11 @@ public:
   bool enable_wrong_path = false;
   bool enable_wpa = false;
 
+  uint64_t fmaxx = 0;
+
+  enum class fetch_BLOCKED { NONE, at_160, at_299, at_328, at_456, at_658, at_1052};
+  fetch_BLOCKED fetch_blocked = fetch_BLOCKED::NONE;
+  
   uint64_t prev_ip = 0;
   uint64_t prev_fetch_block = 0;
   uint64_t last_branch = 0;
@@ -169,6 +206,7 @@ public:
   uint64_t exec_instr_id = 0;
   uint64_t flush_after = 0;
   uint64_t last_wp_cycle = 0;
+  uint64_t fetch_instr_id_new = 0;
 
   CacheBus::request_type last_fetch_packet;
 

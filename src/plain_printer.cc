@@ -58,26 +58,58 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
   fmt::print(stream, "Loads: Count {} Issued {}\n", stats.wrong_path_loads, stats.wrong_path_loads_executed);
   fmt::print(stream, "\n");
 
-  fmt::print(stream, "IDLE Cycles\n");
-  fmt::print(stream, "Fetch Idle Cycles {}\n", stats.fetch_idle_cycles);
+  fmt::print(stream, "Fetch Idle Cycles {} ({:.3g}%)\n", stats.fetch_idle_cycles, (stats.fetch_idle_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Decode Idle Cycles {} ({:.3g}%)\n", stats.decode_idle_cycles, (stats.decode_idle_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Dispatch Idle Cycles {} ({:.3g}%)\n", stats.dispatch_idle_cycles, (stats.dispatch_idle_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Schedule Idle Cycles {} ({:.3g}%)\n", stats.schedule_idle_cycles, (stats.schedule_idle_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Execute Idle Cycles {} ({:.3g}%)\n", stats.execute_idle_cycles, (stats.execute_idle_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "ROB Idle Cycles {} ({:.3g}%)\n\n", stats.rob_idle_cycles, (stats.rob_idle_cycles / std::ceil(stats.cycles())) * 100.0);
+
+  fmt::print(stream, "Fetch Starve Cycles {} ({:.3g}%)\n", stats.fetch_starve_cycles, (stats.fetch_starve_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Decode Starve Cycles {} ({:.3g}%)\n", stats.decode_starve_cycles, (stats.decode_starve_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Dispatch Starve Cycles {} ({:.3g}%)\n", stats.dispatch_starve_cycles, (stats.dispatch_starve_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Schedule Starve Cycles {} ({:.3g}%)\n", stats.schedule_starve_cycles, (stats.schedule_starve_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Execute Starve Cycles {} ({:.3g}%)\n", stats.execute_starve_cycles, (stats.execute_starve_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "ROB Starve Cycles {} ({:.3g}%)\n\n", stats.rob_starve_cycles, (stats.rob_starve_cycles / std::ceil(stats.cycles())) * 100.0);
+
+  fmt::print(stream, "input_queue_empty: {} ({:.3g}%)\n", stats.input_queue_empty, (stats.input_queue_empty / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "ifetch_buffer_full: {} ({:.3g}%)\n\n", stats.ifetch_buffer_full, (stats.ifetch_buffer_full / std::ceil(stats.cycles())) * 100.0);
+
+  fmt::print(stream, "times_fetch_resume_less_than_current_cycle: {} ({:.3g}%)\n", stats.times_fetch_resume_less_than_current_cycle, (stats.times_fetch_resume_less_than_current_cycle / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "no_new_fetch: {} ({:.3g}%)\n", stats.no_new_fetch, (stats.no_new_fetch / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "new_fetch: {} ({:.3g}%)\n", stats.new_fetch, (stats.new_fetch / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "fetch_resume_max: {}\n\n", stats.fetch_resume_max);
+  fmt::print(stream, "fetch_mispred_block_cycles: {}\n", stats.fetch_mispred_block_cycles);
+
+  fmt::print(stream, "fetch_blocked_cycles_at_160: {}\n", stats.fetch_blocked_cycles_at_160);
+  fmt::print(stream, "fetch_blocked_cycles_at_299: {}\n", stats.fetch_blocked_cycles_at_299);
+  fmt::print(stream, "fetch_blocked_cycles_at_328: {}\n", stats.fetch_blocked_cycles_at_328);
+  fmt::print(stream, "fetch_blocked_cycles_at_456: {}\n", stats.fetch_blocked_cycles_at_456);
+  fmt::print(stream, "fetch_blocked_cycles_at_658: {}\n", stats.fetch_blocked_cycles_at_658);
+  fmt::print(stream, "fetch_blocked_cycles_at_1052: {}\n\n", stats.fetch_blocked_cycles_at_1052);
+  fmt::print(stream, "ifetch_buffer_empty_on_lack_wrong_path: {}\n\n", stats.ifetch_buffer_empty_on_lack_wrong_path);
+
   fmt::print(stream, "Fetch Blocked Cycles {}\n", stats.fetch_blocked_cycles);
   fmt::print(stream, "IFetch Failed Events {}\n", stats.fetch_failed_events);
   fmt::print(stream, "Fetch Buffer Not Empty {}\n", stats.fetch_buffer_not_empty);
-  fmt::print(stream, "Decode Idle Cycles {}\n", stats.decode_idle_cycles);
-  fmt::print(stream, "Dispatch Idle Cycles {}\n", stats.dispatch_idle_cycles);
-  fmt::print(stream, "Execute Idle Cycles {}\n", stats.execute_idle_cycles);
   fmt::print(stream, "Execute None Cycles {}\n", stats.execute_none_cycles);
   fmt::print(stream, "Execute Head Not Ready Cycles {}\n", stats.execute_head_not_ready);
   fmt::print(stream, "Execute Head Not Completed Cycles {}\n", stats.execute_head_not_completed);
   fmt::print(stream, "Execute Pending Cycles {}\n", stats.execute_pending_cycles);
   fmt::print(stream, "Execute Load Blocked Cycles {}\n", stats.execute_load_blocked_cycles);
-  fmt::print(stream, "Scheduler Idle Cycles {}\n", stats.sched_idle_cycles);
-  fmt::print(stream, "Scheduler None Cycles {}\n", stats.sched_none_cycles);
-  fmt::print(stream, "ROB Idle Cycles {}\n", stats.rob_idle_cycles);
   fmt::print(stream, "LQ Full Events {}\n", stats.lq_full_events);
   fmt::print(stream, "SQ Full Events {}\n", stats.sq_full_events);
   fmt::print(stream, "Non Branch Squashes {}\n", stats.non_branch_squashes);
   fmt::print(stream, "WP Not Available Count {} Cycles {}\n", stats.lack_of_WP_inst_count, stats.lack_of_WP_inst_cycles);
+
+  fmt::print(stream, "fetch_resume_cycle_max: {}\n", stats.fetch_resume_cycle_max);
+  fmt::print(stream, "available_decode_bandwidth: {}\n", stats.available_decode_bandwidth);
+  fmt::print(stream, "no_available_decode_bandwidth: {}\n", stats.no_available_decode_bandwidth);
+  fmt::print(stream, "progressZ_ifetch_buffer_empty: {}\n", stats.progressZ_ifetch_buffer_empty);
+  fmt::print(stream, "progressZ_ifetch_buffer_not_empty: {}\n", stats.progressZ_ifetch_buffer_not_empty);
+  fmt::print(stream, "progressZ_ifetch_buffer_last_issued: {}\n", stats.progressZ_ifetch_buffer_last_issued);
+  fmt::print(stream, "progressZ_ifetch_buffer_last_not_issued: {}\n", stats.progressZ_ifetch_buffer_last_not_issued);
+
   fmt::print(stream, "\n");
 
   fmt::print(stream, "Inst Stats\n");
