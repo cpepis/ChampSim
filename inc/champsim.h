@@ -27,11 +27,20 @@ struct deadlock : public std::exception {
   explicit deadlock(uint32_t cpu) : which(cpu) {}
 };
 
+// #define DEBUG_PRINT
 #ifdef DEBUG_PRINT
 constexpr bool debug_print = true;
 #else
 constexpr bool debug_print = false;
 #endif
+
+// #define TRACE_DEBUG_PRINT
+#ifdef TRACE_DEBUG_PRINT
+constexpr bool trace_debug_print = true;
+#else
+constexpr bool trace_debug_print = false;
+#endif
+
 } // namespace champsim
 
 #endif
