@@ -45,16 +45,49 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
   std::transform(std::begin(stats.branch_type_misses), std::end(stats.branch_type_misses), std::back_inserter(mpkis),
                  [instrs = stats.instrs()](auto x) { return 1000.0 * std::ceil(x) / std::ceil(instrs); });
 
+  fmt::print(stream, "\n");
   fmt::print(stream, "Branch type MPKI\n");
   for (auto [str, idx] : types)
     fmt::print(stream, "{}: {:.3}\n", str, mpkis[idx]);
   fmt::print(stream, "\n");
+
+  fmt::print(stream, "Resteer Events {}\n", stats.resteer_events);
+
+  fmt::print(stream, "Instruction type breakdown\n");
+  fmt::print(stream, "direct_jumps: {} ({:.3g}%)\n", stats.direct_jumps, ((double)stats.direct_jumps / stats.instrs()) * 100.0);
+  fmt::print(stream, "indirect_branches: {} ({:.3g}%)\n", stats.indirect_branches, ((double)stats.indirect_branches / stats.instrs()) * 100.0);
+  fmt::print(stream, "conditional_branches: {} ({:.3g}%)\n", stats.conditional_branches, ((double)stats.conditional_branches / stats.instrs()) * 100.0);
+  fmt::print(stream, "direct_calls: {} ({:.3g}%)\n", stats.direct_calls, ((double)stats.direct_calls / stats.instrs()) * 100.0);
+  fmt::print(stream, "indirect_calls: {} ({:.3g}%)\n", stats.indirect_calls, ((double)stats.indirect_calls / stats.instrs()) * 100.0);
+  fmt::print(stream, "returns: {} ({:.3g}%)\n", stats.returns, ((double)stats.returns / stats.instrs()) * 100.0);
+  fmt::print(stream, "other_branches: {} ({:.3g}%)\n", stats.other_branches, ((double)stats.other_branches / stats.instrs()) * 100.0);
+  fmt::print(stream, "loads: {} ({:.3g}%)\n", stats.loads, ((double)stats.loads / stats.instrs()) * 100.0);
+  fmt::print(stream, "stores: {} ({:.3g}%)\n", stats.stores, ((double)stats.stores / stats.instrs()) * 100.0);
+  fmt::print(stream, "arithmetic: {} ({:.3g}%)\n\n", stats.arithmetic, ((double)stats.arithmetic / stats.instrs()) * 100.0);
+
+  fmt::print(stream, "Idle Cycles\n");
+  fmt::print(stream, "Fetch     {} ({:.3g}%)\n", stats.fetch_idle_cycles, (stats.fetch_idle_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Decode    {} ({:.3g}%)\n", stats.decode_idle_cycles, (stats.decode_idle_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Dispatch  {} ({:.3g}%)\n", stats.dispatch_idle_cycles, (stats.dispatch_idle_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Schedule  {} ({:.3g}%)\n", stats.schedule_idle_cycles, (stats.schedule_idle_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Execute   {} ({:.3g}%)\n", stats.execute_idle_cycles, (stats.execute_idle_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Retire    {} ({:.3g}%)\n\n", stats.retire_idle_cycles, (stats.retire_idle_cycles / std::ceil(stats.cycles())) * 100.0);
+
+  fmt::print(stream, "Starve Cycles\n");
+  fmt::print(stream, "Fetch     {} ({:.3g}%)\n", stats.fetch_starve_cycles, (stats.fetch_starve_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Decode    {} ({:.3g}%)\n", stats.decode_starve_cycles, (stats.decode_starve_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Dispatch  {} ({:.3g}%)\n", stats.dispatch_starve_cycles, (stats.dispatch_starve_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Schedule  {} ({:.3g}%)\n", stats.schedule_starve_cycles, (stats.schedule_starve_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Execute   {} ({:.3g}%)\n", stats.execute_starve_cycles, (stats.execute_starve_cycles / std::ceil(stats.cycles())) * 100.0);
+  fmt::print(stream, "Retire    {} ({:.3g}%)\n\n", stats.retire_starve_cycles, (stats.retire_starve_cycles / std::ceil(stats.cycles())) * 100.0);
 
   fmt::print(stream, "Dedected Load Misses: {}\n", stats.detected_load_misses);
   fmt::print(stream, "Deferred Execution Instructions: {}\n", stats.deferred_execution_instrs);
   fmt::print(stream, "Rescheduled Total Instructions: {}\n", stats.rescheduled_total_instrs);
   fmt::print(stream, "Rescheduled Other Instructions: {}\n", stats.rescheduled_other_instrs);
   fmt::print(stream, "Rescheduled Loads: {}\n", stats.rescheduled_loads);
+
+  fmt::print(stream, "\n");
   fmt::print(stream, "Rescheduled Branches by Type\n");
   for (auto [str, idx] : types)
     fmt::print(stream, "{}: {}\n", str, stats.rescheduled_branches[idx]);

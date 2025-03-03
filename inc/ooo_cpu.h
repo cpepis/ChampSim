@@ -68,6 +68,34 @@ struct cpu_stats {
   uint64_t end_instrs = 0, end_cycles = 0;
   uint64_t total_rob_occupancy_at_branch_mispredict = 0;
 
+  uint64_t direct_jumps = 0;
+  uint64_t indirect_branches = 0;
+  uint64_t conditional_branches = 0;
+  uint64_t direct_calls = 0;
+  uint64_t indirect_calls = 0;
+  uint64_t returns = 0;
+  uint64_t other_branches = 0;
+
+  uint64_t loads = 0;
+  uint64_t stores = 0;
+  uint64_t arithmetic = 0;
+
+  uint64_t fetch_idle_cycles = 0;
+  uint64_t decode_idle_cycles = 0;
+  uint64_t dispatch_idle_cycles = 0;
+  uint64_t schedule_idle_cycles = 0;
+  uint64_t execute_idle_cycles = 0;
+  uint64_t retire_idle_cycles = 0;
+
+  uint64_t fetch_starve_cycles = 0;
+  uint64_t decode_starve_cycles = 0;  
+  uint64_t dispatch_starve_cycles = 0;
+  uint64_t schedule_starve_cycles = 0;
+  uint64_t execute_starve_cycles = 0;
+  uint64_t retire_starve_cycles = 0;
+
+  uint64_t resteer_events = 0;
+
   uint64_t detected_load_misses = 0;
   uint64_t deferred_execution_instrs  = 0;
 

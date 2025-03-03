@@ -227,6 +227,10 @@ long O3_CPU::fetch_instruction()
 {
   long progress{0};
 
+  if (std::empty(IFETCH_BUFFER)) {
+    sim_stats.fetch_starve_cycles++;
+  }
+
   // Fetch a single cache line
   auto fetch_ready = [](const ooo_model_instr& x) {
     return x.dib_checked == COMPLETED && !x.fetched;
@@ -251,6 +255,10 @@ long O3_CPU::fetch_instruction()
     }
 
     l1i_req_begin = std::find_if(l1i_req_end, std::end(IFETCH_BUFFER), fetch_ready);
+  }
+
+  if (progress == 0) {
+    sim_stats.fetch_idle_cycles++;
   }
 
   return progress;
@@ -294,6 +302,10 @@ long O3_CPU::decode_instruction()
                                                          [cycle = current_cycle](const auto& x) { return x.event_cycle <= cycle; });
   long progress{std::distance(window_begin, window_end)};
 
+  if (std::empty(DECODE_BUFFER)) {
+    sim_stats.decode_starve_cycles++;
+  }
+
   // Send decoded instructions to dispatch
   std::for_each(window_begin, window_end, [&, this](auto& db_entry) {
     this->do_dib_update(db_entry);
@@ -308,6 +320,7 @@ long O3_CPU::decode_instruction()
         db_entry.branch_mispredicted = 0;
         // pay misprediction penalty
         this->fetch_resume_cycle = this->current_cycle + BRANCH_MISPREDICT_PENALTY;
+        sim_stats.resteer_events++;
       }
     }
 
@@ -318,6 +331,10 @@ long O3_CPU::decode_instruction()
   std::move(window_begin, window_end, std::back_inserter(DISPATCH_BUFFER));
   DECODE_BUFFER.erase(window_begin, window_end);
 
+  if (progress == 0) {
+    sim_stats.decode_idle_cycles++;
+  }
+
   return progress;
 }
 
@@ -326,6 +343,10 @@ void O3_CPU::do_dib_update(const ooo_model_instr& instr) { DIB.fill(instr.ip); }
 long O3_CPU::dispatch_instruction()
 {
   auto available_dispatch_bandwidth = DISPATCH_WIDTH;
+
+  if (std::empty(DISPATCH_BUFFER)) {
+    sim_stats.dispatch_starve_cycles++;
+  }
 
   // dispatch DISPATCH_WIDTH instructions into the ROB
   while (available_dispatch_bandwidth > 0 && !std::empty(DISPATCH_BUFFER) && DISPATCH_BUFFER.front().event_cycle < current_cycle && std::size(ROB) != ROB_SIZE
@@ -339,6 +360,10 @@ long O3_CPU::dispatch_instruction()
     available_dispatch_bandwidth--;
   }
 
+  if (((DISPATCH_WIDTH - available_dispatch_bandwidth) == 0)) {
+    sim_stats.dispatch_idle_cycles++;
+  }
+
   return DISPATCH_WIDTH - available_dispatch_bandwidth;
 }
 
@@ -346,6 +371,11 @@ long O3_CPU::schedule_instruction()
 {
   auto search_bw = SCHEDULER_SIZE;
   int progress{0};
+
+  if (std::empty(ROB)) {
+    sim_stats.schedule_starve_cycles++;
+  }
+
   for (auto rob_it = std::begin(ROB); rob_it != std::end(ROB) && search_bw > 0; ++rob_it) {
     if (rob_it->scheduled == 0 || rob_it->rescheduled == INFLIGHT) {
       do_scheduling(*rob_it);
@@ -354,6 +384,10 @@ long O3_CPU::schedule_instruction()
 
     if (rob_it->executed == 0)
       --search_bw;
+  }
+
+  if (progress == 0) {
+    sim_stats.schedule_idle_cycles++;
   }
 
   return progress;
@@ -417,6 +451,11 @@ void O3_CPU::do_scheduling(ooo_model_instr& instr)
 long O3_CPU::execute_instruction()
 {
   auto exec_bw = EXEC_WIDTH;
+
+  if (std::empty(ROB)) {
+    sim_stats.execute_starve_cycles++;
+  }
+
   for (auto rob_it = std::begin(ROB); rob_it != std::end(ROB) && exec_bw > 0; ++rob_it) {
     if (rob_it->scheduled == COMPLETED && rob_it->executed == 0 && rob_it->num_reg_dependent == 0 && rob_it->event_cycle <= current_cycle) {
 
@@ -428,6 +467,10 @@ long O3_CPU::execute_instruction()
       do_execution(*rob_it);
       --exec_bw;
     }
+  }
+
+  if ((EXEC_WIDTH - exec_bw) == 0) {
+    sim_stats.execute_idle_cycles++;
   }
 
   return EXEC_WIDTH - exec_bw;
@@ -600,8 +643,10 @@ void O3_CPU::do_complete_execution(ooo_model_instr& instr)
       dependent.scheduled = COMPLETED;
   }
 
-  if (instr.branch_mispredicted)
+  if (instr.branch_mispredicted) {
     fetch_resume_cycle = current_cycle + BRANCH_MISPREDICT_PENALTY;
+    sim_stats.resteer_events++;
+  }
 }
 
 long O3_CPU::complete_inflight_instruction()
@@ -706,9 +751,56 @@ long O3_CPU::retire_rob()
   if constexpr (champsim::debug_print) {
     std::for_each(retire_begin, retire_end, [cycle = current_cycle](const auto& x) { fmt::print("[ROB] retire_rob instr_id: {} is retired cycle: {}\n", x.instr_id, cycle); });
   }
+
+  if (std::empty(ROB)) {
+    sim_stats.retire_starve_cycles++;
+  }
+
   auto retire_count = std::distance(retire_begin, retire_end);
   num_retired += retire_count;
+
+  // Find the type of instruction
+  for (auto rob_it = retire_begin; rob_it != retire_end; ++rob_it) {
+    if (rob_it->is_branch) {
+      switch (rob_it->branch_type) {
+      case BRANCH_DIRECT_JUMP:
+        sim_stats.direct_jumps++;
+        break;
+      case BRANCH_INDIRECT:
+        sim_stats.indirect_branches++;
+        break;
+      case BRANCH_CONDITIONAL:
+        sim_stats.conditional_branches++;
+        break;
+      case BRANCH_DIRECT_CALL:
+        sim_stats.direct_calls++;
+        break;
+      case BRANCH_INDIRECT_CALL:
+        sim_stats.indirect_calls++;
+        break;
+      case BRANCH_RETURN:
+        sim_stats.returns++;
+        break;
+      case BRANCH_OTHER:
+        sim_stats.other_branches++;
+        break;
+      default:
+        assert(false && "Unknown branch type");
+      }
+    } else if (std::size(rob_it->source_memory)) {
+      sim_stats.loads++;
+    } else if (std::size(rob_it->destination_memory)) {
+      sim_stats.stores++;
+    } else {
+      sim_stats.arithmetic++;
+    }
+  }
+
   ROB.erase(retire_begin, retire_end);
+
+  if (retire_count == 0) {
+    sim_stats.retire_idle_cycles++;
+  }
 
   return retire_count;
 }
