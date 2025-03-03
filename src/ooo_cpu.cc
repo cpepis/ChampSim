@@ -125,14 +125,13 @@ void O3_CPU::initialize_instruction()
     sim_stats.fetch_mispred_block_cycles++;
     sim_stats.fetch_resume_cycle_max++;
   } else if (sim_stats.fetch_mispred_block_cycles) {
-    // if constexpr (champsim::wp_debug_print) {
+    if constexpr (champsim::wp_debug_print) {
       fmt::print("current cycle: {} blocked cycles {} fetch_id: {} exec_id: {}\n", current_cycle, sim_stats.fetch_mispred_block_cycles, fetch_instr_id, exec_instr_id);
       if (sim_stats.fetch_mispred_block_cycles > 1000)
       {
         print_deadlock();
       }
-
-    // }
+    }
     sim_stats.fetch_mispred_block_cycles = 0;
   }
 
@@ -162,6 +161,7 @@ void O3_CPU::initialize_instruction()
       flush_after = 0;
       fetch_instr_id = 0;
       fetch_resume_cycle = current_cycle + BRANCH_MISPREDICT_PENALTY;
+      sim_stats.resteer_events++;
       fetch_blocked = fetch_BLOCKED::at_160;
       if constexpr (champsim::wp_debug_print) {
         fmt::print("finished flushing\n");
@@ -283,13 +283,6 @@ void O3_CPU::initialize_instruction()
 
     auto &inst = input_queue.front();
 
-    if (std::size(inst.source_memory)) {
-      sim_stats.loads++;
-    }
-
-    if (std::size(inst.destination_memory)) {
-      sim_stats.stores++;
-    }
 
     // auto stop_fetch = do_init_instruction(input_queue.front());
     auto stop_fetch = false;
@@ -456,6 +449,10 @@ bool O3_CPU::do_predict_branch(ooo_model_instr& arch_instr)
     // call code prefetcher every time the branch predictor is used
     l1i->impl_prefetcher_branch_operate(arch_instr.ip, arch_instr.branch, predicted_branch_target);
 
+    // Perfect branch prediction
+    // predicted_branch_target = arch_instr.branch_target;
+    // arch_instr.branch_prediction = arch_instr.branch_taken;
+
     if (predicted_branch_target != arch_instr.branch_target
         || (((arch_instr.branch == BRANCH_CONDITIONAL) || (arch_instr.branch == BRANCH_OTHER))
             && arch_instr.branch_taken != arch_instr.branch_prediction)) { // conditional branches are re-evaluated at decode when the target is computed
@@ -567,8 +564,16 @@ long O3_CPU::fetch_instruction()
     l1i_req_begin = std::find_if(l1i_req_end, std::end(IFETCH_BUFFER), fetch_ready);
   }
 
-  if (progress == 0) {
+  if (std::empty(IFETCH_BUFFER)) {
+    sim_stats.fetch_starve_cycles++;
+  }
+
+  if (progress == 0 || std::empty(IFETCH_BUFFER)) {
     sim_stats.fetch_idle_cycles++;
+  }
+
+  if (progress == 0) {
+    // sim_stats.fetch_idle_cycles++;
     if (!IFETCH_BUFFER.empty()) {
       sim_stats.progressZ_ifetch_buffer_not_empty++;
       if (!IFETCH_BUFFER.back().fetch_issued) {
@@ -638,7 +643,7 @@ long O3_CPU::promote_to_decode()
 long O3_CPU::decode_instruction()
 {
   if (std::size(DECODE_BUFFER) == 0) {
-    sim_stats.decode_idle_cycles++;
+    sim_stats.decode_starve_cycles++;
   }
 
   auto available_decode_bandwidth = std::min<long>(DECODE_WIDTH, DISPATCH_BUFFER_SIZE - std::size(DISPATCH_BUFFER));
@@ -658,7 +663,7 @@ long O3_CPU::decode_instruction()
 
     // Resume fetch
     if (db_entry.branch_mispredicted && !db_entry.is_wrong_path) {
-      fmt::print("DEC instr_id {} current_cycle {}\n", db_entry.instr_id, current_cycle);
+      // fmt::print("DEC instr_id {} current_cycle {}\n", db_entry.instr_id, current_cycle);
       // These branches detect the misprediction at decode
       if ((db_entry.branch == BRANCH_DIRECT_JUMP) || (db_entry.branch == BRANCH_DIRECT_CALL)) {
         // || (((db_entry.branch == BRANCH_CONDITIONAL) || (db_entry.branch == BRANCH_OTHER)) && db_entry.branch_taken == db_entry.branch_prediction)) {
@@ -666,6 +671,7 @@ long O3_CPU::decode_instruction()
         // db_entry.branch_mispredicted = 0;
         // pay misprediction penalty
         this->fetch_resume_cycle = this->current_cycle + BRANCH_MISPREDICT_PENALTY;
+        this->sim_stats.resteer_events++;
         this->fetch_blocked = fetch_BLOCKED::at_658;
 
         // update branch stats here
@@ -705,7 +711,7 @@ long O3_CPU::decode_instruction()
     IFETCH_BUFFER.clear();
   }
 
-  if (available_decode_bandwidth != 0 && progress == 0 && !std::empty(DECODE_BUFFER)) {
+  if (progress == 0 || std::empty(DECODE_BUFFER)) {
     sim_stats.decode_idle_cycles++;
   }
 
@@ -717,7 +723,7 @@ void O3_CPU::do_dib_update(const ooo_model_instr& instr) { DIB.fill(instr.ip); }
 long O3_CPU::dispatch_instruction()
 {
   if (std::size(DISPATCH_BUFFER) == 0) {
-    sim_stats.dispatch_idle_cycles++;
+    sim_stats.dispatch_starve_cycles++;
   }
 
   auto available_dispatch_bandwidth = DISPATCH_WIDTH;
@@ -737,9 +743,9 @@ long O3_CPU::dispatch_instruction()
          && ((std::size(DISPATCH_BUFFER.front().destination_memory) + std::size(SQ)) <= SQ_SIZE)) {
     ROB.push_back(std::move(DISPATCH_BUFFER.front()));
 
-    if (ROB.back().is_branch && ROB.back().branch_mispredicted && !ROB.back().is_wrong_path) {
-        fmt::print("DISPATCH: instr_id {} cycle {}\n", ROB.back().instr_id, current_cycle);
-    }
+    // if (ROB.back().is_branch && ROB.back().branch_mispredicted && !ROB.back().is_wrong_path) {
+    //     fmt::print("DISPATCH: instr_id {} cycle {}\n", ROB.back().instr_id, current_cycle);
+    // }
 
     DISPATCH_BUFFER.pop_front();
     do_memory_scheduling(ROB.back());
@@ -747,7 +753,7 @@ long O3_CPU::dispatch_instruction()
     available_dispatch_bandwidth--;
   }
 
-  if (available_dispatch_bandwidth != 0 && ((DISPATCH_WIDTH - available_dispatch_bandwidth) == 0) && !std::empty(DISPATCH_BUFFER)) {
+  if (((DISPATCH_WIDTH - available_dispatch_bandwidth) == 0) || std::empty(DISPATCH_BUFFER)) {
     sim_stats.dispatch_idle_cycles++;
   }
 
@@ -758,6 +764,11 @@ long O3_CPU::schedule_instruction()
 {
   auto search_bw = SCHEDULER_SIZE;
   int progress{0};
+
+  if (std::size(ROB) == 0) {
+    sim_stats.schedule_starve_cycles++;
+  }
+
   for (auto rob_it = std::begin(ROB); rob_it != std::end(ROB) && search_bw > 0; ++rob_it) {
     if (rob_it->scheduled == 0) {
       do_scheduling(*rob_it);
@@ -768,7 +779,7 @@ long O3_CPU::schedule_instruction()
       --search_bw;
   }
 
-  if (search_bw > 0 && progress == 0) {
+  if (progress == 0 || std::empty(ROB)) {
     sim_stats.schedule_idle_cycles++;
   }
 
@@ -778,9 +789,9 @@ long O3_CPU::schedule_instruction()
 void O3_CPU::do_scheduling(ooo_model_instr& instr)
 {
 
-  if (instr.is_branch && instr.branch_mispredicted && !instr.is_wrong_path) {
-    fmt::print("SCHED: instr_id {} cycle {} ROB.size: {}\n", instr.instr_id, current_cycle, std::size(ROB));
-  }
+  // if (instr.branch_mispredicted && !instr.is_wrong_path) {
+  //   fmt::print("SCHED: instr_id {} cycle {} ROB.size: {}\n", instr.instr_id, current_cycle, std::size(ROB));
+  // }
 
   // Mark register dependencies
   for (auto src_reg : instr.source_registers) {
@@ -815,6 +826,11 @@ void O3_CPU::do_scheduling(ooo_model_instr& instr)
 long O3_CPU::execute_instruction()
 {
   auto exec_bw = EXEC_WIDTH;
+
+  if (std::size(ROB) == 0) {
+    sim_stats.execute_starve_cycles++;
+  }
+
   for (auto rob_it = std::begin(ROB); rob_it != std::end(ROB) && exec_bw > 0; ++rob_it) {
     if (rob_it->scheduled && rob_it->executed == 0 && rob_it->num_reg_dependent == 0 && rob_it->event_cycle <= current_cycle) {
       do_execution(*rob_it);
@@ -826,7 +842,7 @@ long O3_CPU::execute_instruction()
   //   sim_stats.execute_starve_cycles++;
   // }
 
-  if (exec_bw > 0 && (EXEC_WIDTH - exec_bw) == 0) {
+  if ((EXEC_WIDTH - exec_bw) == 0 || std::empty(ROB)) {
     sim_stats.execute_idle_cycles++;
   }
 
@@ -1066,9 +1082,14 @@ void O3_CPU::do_complete_execution(ooo_model_instr& instr)
       dependent.scheduled = true;
   }
 
+  bool penalty = false;
+
   if (instr.branch_mispredicted && !instr.is_wrong_path && !instr.squashed) {
     update_branch_stats(instr);
+    penalty = true;
     fetch_resume_cycle = current_cycle + BRANCH_MISPREDICT_PENALTY;
+    sim_stats.resteer_events++;
+
     fetch_blocked = fetch_BLOCKED::at_1052;
     prev_fetch_block = 0;
     restart = true;
@@ -1076,6 +1097,10 @@ void O3_CPU::do_complete_execution(ooo_model_instr& instr)
       fmt::print("flush ROB cycle {} instr_id {} ROB_SIZE {}\n", current_cycle, instr.instr_id, ROB.size());
     }
   }
+
+  // if (instr.branch_mispredicted && !instr.is_wrong_path) {
+  //   fmt::print("EXEC instr_id: {} current_cycle: {} diff_new: {}\n", instr.instr_id, current_cycle, current_cycle - instr.sched_cycle);
+  // }
 
   if (!instr.is_wrong_path && (instr.before_wrong_path || instr.branch_mispredicted) && !instr.squashed && instr.instr_id == fetch_instr_id) {
     if constexpr (champsim::wp_debug_print) {
@@ -1173,10 +1198,15 @@ void O3_CPU::do_complete_execution(ooo_model_instr& instr)
     DECODE_BUFFER.clear();
     IFETCH_BUFFER.clear();
 
-    fmt::print("EXEC instr_id: {} current_cycle: {}\n", instr.instr_id, current_cycle);
+    // if (instr.branch_mispredicted && !instr.is_wrong_path) {
+    //   fmt::print("EXEC instr_id: {} current_cycle: {} diff: {}\n", instr.instr_id, current_cycle, current_cycle - instr.sched_cycle);
+    // }
 
     exec_instr_id = instr.instr_id;
-    fetch_resume_cycle = current_cycle + BRANCH_MISPREDICT_PENALTY;
+    if (!penalty) {
+      fetch_resume_cycle = current_cycle + BRANCH_MISPREDICT_PENALTY;
+      sim_stats.resteer_events++;
+    }
   }
 }
 
@@ -1257,7 +1287,7 @@ long O3_CPU::handle_memory_return()
 long O3_CPU::retire_rob()
 {
   if (std::size(ROB) == 0) {
-    sim_stats.rob_idle_cycles++;
+    sim_stats.rob_starve_cycles++;
   }
 
   auto [retire_begin, retire_end] = champsim::get_span_p(std::cbegin(ROB), std::cend(ROB), RETIRE_WIDTH, [](const auto& x) { return x.completed; });
@@ -1335,6 +1365,49 @@ long O3_CPU::retire_rob()
 
   if (num_retired % 1000 == 0) {
     l1i->avgCachePoll();
+  }
+
+  // Find the type of instruction
+  for (auto rob_it = retire_begin; rob_it != retire_end; ++rob_it) {
+    if (pip == rob_it->ip)
+      continue;
+    if (!(!rob_it->is_wrong_path && !rob_it->is_prefetch))
+      continue;
+    pip = rob_it->ip;
+    if (rob_it->is_branch) {
+      switch (rob_it->branch) {
+      case BRANCH_DIRECT_JUMP:
+        sim_stats.direct_jumps++;
+        break;
+      case BRANCH_INDIRECT:
+        sim_stats.indirect_branches++;
+        break;
+      case BRANCH_CONDITIONAL:
+        sim_stats.conditional_branches++;
+        break;
+      case BRANCH_DIRECT_CALL:
+        sim_stats.direct_calls++;
+        break;
+      case BRANCH_INDIRECT_CALL:
+        sim_stats.indirect_calls++;
+        break;
+      case BRANCH_RETURN:
+        sim_stats.returns++;
+        break;
+      case BRANCH_OTHER:
+        sim_stats.other_branches++;
+        break;
+      default:
+        assert(false && "Unknown branch type");
+      }
+    } if (std::size(rob_it->source_memory)) {
+        sim_stats.loads++;
+    } else if (std::size(rob_it->destination_memory)) {
+        sim_stats.stores++;
+    } else {
+        sim_stats.arithmetic++;
+    }
+    sim_stats.total_instructions++;
   }
 
   ROB.erase(retire_begin, retire_end);

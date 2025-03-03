@@ -65,6 +65,20 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
   fmt::print(stream, "Execute Idle Cycles {} ({:.3g}%)\n", stats.execute_idle_cycles, (stats.execute_idle_cycles / std::ceil(stats.cycles())) * 100.0);
   fmt::print(stream, "ROB Idle Cycles {} ({:.3g}%)\n\n", stats.rob_idle_cycles, (stats.rob_idle_cycles / std::ceil(stats.cycles())) * 100.0);
 
+  fmt::print(stream, "direct_jumps: {} ({:.3g}%)\n", stats.direct_jumps, ((double)stats.direct_jumps / (double)stats.total_instructions) * 100.0);
+  fmt::print(stream, "indirect_branches: {} ({:.3g}%)\n", stats.indirect_branches, ((double)stats.indirect_branches / (double)stats.total_instructions) * 100.0);
+  fmt::print(stream, "conditional_branches: {} ({:.3g}%)\n", stats.conditional_branches, ((double)stats.conditional_branches / (double)stats.total_instructions) * 100.0);
+  fmt::print(stream, "direct_calls: {} ({:.3g}%)\n", stats.direct_calls, ((double)stats.direct_calls / (double)stats.total_instructions) * 100.0);
+  fmt::print(stream, "indirect_calls: {} ({:.3g}%)\n", stats.indirect_calls, ((double)stats.indirect_calls / (double)stats.total_instructions) * 100.0);
+  fmt::print(stream, "returns: {} ({:.3g}%)\n", stats.returns, ((double)stats.returns / (double)stats.total_instructions) * 100.0);
+  fmt::print(stream, "other_branches: {} ({:.3g}%)\n\n", stats.other_branches, ((double)stats.other_branches / (double)stats.total_instructions) * 100.0);
+
+  fmt::print(stream, "loads: {} ({:.3g}%)\n", stats.loads, ((double)stats.loads / (double)stats.total_instructions) * 100.0);
+  fmt::print(stream, "stores: {} ({:.3g}%)\n", stats.stores, ((double)stats.stores / (double)stats.total_instructions) * 100.0);
+  fmt::print(stream, "arithmetic: {} ({:.3g}%)\n\n", stats.arithmetic, ((double)stats.arithmetic / (double)stats.total_instructions) * 100.0);
+
+  fmt::print(stream, "total_instructions: {}\n\n", stats.total_instructions);
+
   fmt::print(stream, "Fetch Starve Cycles {} ({:.3g}%)\n", stats.fetch_starve_cycles, (stats.fetch_starve_cycles / std::ceil(stats.cycles())) * 100.0);
   fmt::print(stream, "Decode Starve Cycles {} ({:.3g}%)\n", stats.decode_starve_cycles, (stats.decode_starve_cycles / std::ceil(stats.cycles())) * 100.0);
   fmt::print(stream, "Dispatch Starve Cycles {} ({:.3g}%)\n", stats.dispatch_starve_cycles, (stats.dispatch_starve_cycles / std::ceil(stats.cycles())) * 100.0);
@@ -80,6 +94,8 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
   fmt::print(stream, "new_fetch: {} ({:.3g}%)\n", stats.new_fetch, (stats.new_fetch / std::ceil(stats.cycles())) * 100.0);
   fmt::print(stream, "fetch_resume_max: {}\n\n", stats.fetch_resume_max);
   fmt::print(stream, "fetch_mispred_block_cycles: {}\n", stats.fetch_mispred_block_cycles);
+
+  fmt::print(stream, "Resteer Events {}\n", stats.resteer_events);
 
   fmt::print(stream, "fetch_blocked_cycles_at_160: {}\n", stats.fetch_blocked_cycles_at_160);
   fmt::print(stream, "fetch_blocked_cycles_at_299: {}\n", stats.fetch_blocked_cycles_at_299);
