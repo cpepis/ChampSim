@@ -50,6 +50,7 @@ enum flags { NON_SPEC = 0, SERIAL, SERIAL_AFTER, SERIAL_BEFORE, READ_BARRIER, WR
 struct ooo_model_instr {
   uint64_t instr_id = 0;
   uint64_t ip = 0;
+  uint64_t trace_target = 0;
   uint64_t event_cycle = 0;
 
   bool is_branch = 0;
@@ -68,6 +69,7 @@ struct ooo_model_instr {
   bool is_write_barrier = false;
   bool is_squash_after = false;
   bool is_wrong_path = false;
+  bool is_return = false;
 
   bool is_prefetch = false;
 
@@ -198,6 +200,7 @@ private:
     }
 
     int flags = instr.flags;
+    trace_target = instr.branch_target;
 
     is_non_spec = (flags & 1 << NON_SPEC);
     is_serializing = (flags & 1 << SERIAL);
@@ -243,6 +246,7 @@ private:
           if (brCode & (1 << 4)) {
             // is REturn
             branch = BRANCH_RETURN;
+            is_return = true;
           }
           // Indirest Call
           if (brCode & (1 << 3)) {
