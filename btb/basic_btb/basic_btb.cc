@@ -11,18 +11,14 @@
 #include <deque>
 #include <map>
 
+#include "../common/branch_info.h"
 #include "msl/lru_table.h"
 #include "ooo_cpu.h"
 
+using champsim::branch_info;
+
 namespace
 {
-enum class branch_info {
-  INDIRECT,
-  RETURN,
-  ALWAYS_TAKEN,
-  CONDITIONAL,
-};
-
 constexpr std::size_t BTB_SET = 1024;
 constexpr std::size_t BTB_WAY = 8;
 constexpr std::size_t BTB_INDIRECT_SIZE = 4096;
@@ -60,13 +56,13 @@ void O3_CPU::initialize_btb()
 std::pair<uint64_t, uint8_t> O3_CPU::btb_prediction(uint64_t ip)
 {
   // use BTB for all other branches + direct calls
-  auto btb_entry = ::BTB.at(this).check_hit({ip, 0, ::branch_info::ALWAYS_TAKEN});
+  auto btb_entry = ::BTB.at(this).check_hit({ip, 0, branch_info::ALWAYS_TAKEN});
 
   // no prediction for this IP
   if (!btb_entry.has_value())
     return {0, false};
 
-  if (btb_entry->type == ::branch_info::RETURN) {
+  if (btb_entry->type == branch_info::RETURN) {
     if (std::empty(::RAS[this]))
       return {0, true};
 
@@ -77,12 +73,12 @@ std::pair<uint64_t, uint8_t> O3_CPU::btb_prediction(uint64_t ip)
     return {target + size, true};
   }
 
-  if (btb_entry->type == ::branch_info::INDIRECT) {
+  if (btb_entry->type == branch_info::INDIRECT) {
     auto hash = (ip >> 2) ^ ::CONDITIONAL_HISTORY[this].to_ullong();
     return {::INDIRECT_BTB[this][hash % std::size(::INDIRECT_BTB[this])], true};
   }
 
-  return {btb_entry->target, btb_entry->type != ::branch_info::CONDITIONAL};
+  return {btb_entry->target, btb_entry->type != branch_info::CONDITIONAL};
 }
 
 void O3_CPU::update_btb(uint64_t ip, uint64_t branch_target, uint8_t taken, uint8_t branch_type)
@@ -117,13 +113,13 @@ void O3_CPU::update_btb(uint64_t ip, uint64_t branch_target, uint8_t taken, uint
   }
 
   // update btb entry
-  auto type = ::branch_info::ALWAYS_TAKEN;
+  auto type = branch_info::ALWAYS_TAKEN;
   if ((branch_type == BRANCH_INDIRECT) || (branch_type == BRANCH_INDIRECT_CALL))
-    type = ::branch_info::INDIRECT;
+    type = branch_info::INDIRECT;
   else if (branch_type == BRANCH_RETURN)
-    type = ::branch_info::RETURN;
+    type = branch_info::RETURN;
   else if ((branch_type == BRANCH_CONDITIONAL) || (branch_type == BRANCH_OTHER))
-    type = ::branch_info::CONDITIONAL;
+    type = branch_info::CONDITIONAL;
 
   auto opt_entry = ::BTB.at(this).check_hit({ip, branch_target, type});
   if (opt_entry.has_value()) {
