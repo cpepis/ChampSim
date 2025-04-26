@@ -49,6 +49,25 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
   for (auto [str, idx] : types)
     fmt::print(stream, "{}: {:.3}\n", str, mpkis[idx]);
   fmt::print(stream, "\n");
+
+  fmt::print(stream, "Breakdown of Rescheduled Instructions by Type\n");
+  for (auto [str, idx] : types) {
+    fmt::print(stream, "{}: {} ({:.3g}%)\n", str, stats.rescheduled_branch[idx], ((double)stats.rescheduled_branch[idx] / stats.instrs()) * 100.0);
+  }
+  fmt::print(stream, "LOAD: {} ({:.3g}%)\n", stats.rescheduled_load, ((double)stats.rescheduled_load / stats.instrs()) * 100.0);
+  fmt::print(stream, "STORE: {} ({:.3g}%)\n", stats.rescheduled_store, ((double)stats.rescheduled_store / stats.instrs()) * 100.0);
+  fmt::print(stream, "ARITHMETIC: {} ({:.3g}%)\n\n", stats.rescheduled_arithmetic, ((double)stats.rescheduled_arithmetic / stats.instrs()) * 100.0);
+
+  fmt::print(stream, "Breakdown of Retired Instructions by Type\n");
+  for (auto [str, idx] : types) {
+    fmt::print(stream, "{}: {} ({:.3g}%)\n", str, stats.retired_branch[idx], ((double)stats.retired_branch[idx] / stats.instrs()) * 100.0);
+  }
+  fmt::print(stream, "LOAD: {} ({:.3g}%)\n", stats.retired_load, ((double)stats.retired_load / stats.instrs()) * 100.0);
+  fmt::print(stream, "STORE: {} ({:.3g}%)\n", stats.retired_store, ((double)stats.retired_store / stats.instrs()) * 100.0);
+  fmt::print(stream, "ARITHMETIC: {} ({:.3g}%)\n\n", stats.retired_arithmetic, ((double)stats.retired_arithmetic / stats.instrs()) * 100.0);
+
+  fmt::print(stream, "Dedected Load Misses: {}\n", stats.detected_load_misses);
+  fmt::print(stream, "Deferred Execution Instructions: {}\n\n", stats.deferred_execution_instrs);
 }
 
 void champsim::plain_printer::print(CACHE::stats_type stats)

@@ -346,7 +346,7 @@ long O3_CPU::schedule_instruction()
   auto search_bw = SCHEDULER_SIZE;
   int progress{0};
   for (auto rob_it = std::begin(ROB); rob_it != std::end(ROB) && search_bw > 0; ++rob_it) {
-    if (rob_it->scheduled == 0) {
+    if (rob_it->scheduled == 0 || rob_it->rescheduled == INFLIGHT) {
       do_scheduling(*rob_it);
       ++progress;
     }
@@ -361,25 +361,57 @@ long O3_CPU::schedule_instruction()
 void O3_CPU::do_scheduling(ooo_model_instr& instr)
 {
   // Mark register dependencies
-  for (auto src_reg : instr.source_registers) {
-    if (!std::empty(reg_producers[src_reg])) {
-      ooo_model_instr& prior = reg_producers[src_reg].back();
-      if (prior.registers_instrs_depend_on_me.empty() || prior.registers_instrs_depend_on_me.back().get().instr_id != instr.instr_id) {
-        prior.registers_instrs_depend_on_me.push_back(instr);
-        instr.num_reg_dependent++;
+  if (!instr.already_set_dependencies) {
+    for (auto src_reg : instr.source_registers) {
+      if (!std::empty(reg_producers[src_reg])) {
+        ooo_model_instr& prior = reg_producers[src_reg].back();
+        if (prior.registers_instrs_depend_on_me.empty() || prior.registers_instrs_depend_on_me.back().get().instr_id != instr.instr_id) {
+          prior.registers_instrs_depend_on_me.push_back(instr);
+          instr.num_reg_dependent++;
+        }
+
+        if (enable_rsk_dbg) {
+          fmt::print("{} instr_id: {} depends on: {} load: {}\n", __func__, instr.instr_id, prior.instr_id, prior.is_load);
+        }
+
+        if (enable_rsk_dbg) {
+          fmt::print("{} instr_id: {} src_reg: {} dst_reg: {}\n", __func__, instr.instr_id, src_reg, instr.destination_registers);
+        }
       }
+    }
+
+    for (auto dreg : instr.destination_registers) {
+      auto begin = std::begin(reg_producers[dreg]);
+      auto end = std::end(reg_producers[dreg]);
+      auto ins = std::lower_bound(begin, end, instr, [](const ooo_model_instr& lhs, const ooo_model_instr& rhs) { return lhs.instr_id < rhs.instr_id; });
+      reg_producers[dreg].insert(ins, std::ref(instr));
     }
   }
 
-  for (auto dreg : instr.destination_registers) {
-    auto begin = std::begin(reg_producers[dreg]);
-    auto end = std::end(reg_producers[dreg]);
-    auto ins = std::lower_bound(begin, end, instr, [](const ooo_model_instr& lhs, const ooo_model_instr& rhs) { return lhs.instr_id < rhs.instr_id; });
-    reg_producers[dreg].insert(ins, std::ref(instr));
+  if (enable_rsk && instr.already_set_dependencies && instr.rescheduled == INFLIGHT) {
+    auto prev_event_cycle = instr.event_cycle;
+    instr.event_cycle = std::max(instr.event_cycle, current_cycle + (warmup ? 0 : SCHEDULING_LATENCY));
+    instr.rescheduled = COMPLETED;
+
+    if (instr.is_branch) {
+      sim_stats.rescheduled_branch[instr.branch_type]++;
+    } else if (instr.is_load) {
+      sim_stats.rescheduled_load++;
+    } else if (instr.is_store) {
+      sim_stats.rescheduled_store++;
+    } else {
+      sim_stats.rescheduled_arithmetic++;
+    }
+
+    if (enable_rsk_dbg) {
+      fmt::print("{} Rescheduling instr_id: {} event_cycle: {} -> {}\n", __func__, instr.instr_id, prev_event_cycle, instr.event_cycle);
+    }
+  } else {
+    instr.event_cycle = current_cycle + (warmup ? 0 : SCHEDULING_LATENCY);
   }
 
   instr.scheduled = COMPLETED;
-  instr.event_cycle = current_cycle + (warmup ? 0 : SCHEDULING_LATENCY);
+  instr.already_set_dependencies = true;
 }
 
 long O3_CPU::execute_instruction()
@@ -387,6 +419,12 @@ long O3_CPU::execute_instruction()
   auto exec_bw = EXEC_WIDTH;
   for (auto rob_it = std::begin(ROB); rob_it != std::end(ROB) && exec_bw > 0; ++rob_it) {
     if (rob_it->scheduled == COMPLETED && rob_it->executed == 0 && rob_it->num_reg_dependent == 0 && rob_it->event_cycle <= current_cycle) {
+
+      if (enable_rsk && rob_it->rescheduled == INFLIGHT) {
+        sim_stats.deferred_execution_instrs++;
+        continue;
+      }
+
       do_execution(*rob_it);
       --exec_bw;
     }
@@ -487,6 +525,11 @@ long O3_CPU::operate_lsq()
       if (success) {
         --load_bw;
         lq_entry->fetch_issued = true;
+        lq_entry->fetch_issued_cycle = current_cycle;
+
+        if (enable_rsk_dbg) {
+          fmt::print("{} instr_id: {} vaddr: {:#x} fetch_issued at cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address, current_cycle);
+        }
       }
     }
   }
@@ -610,6 +653,41 @@ long O3_CPU::handle_memory_return()
         lq_entry->finish(std::begin(ROB), std::end(ROB));
         lq_entry.reset();
         ++progress;
+
+        if (enable_rsk_dbg) {
+          fmt::print("{} instr_id: {} vaddr: {:#x} finished at cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address, current_cycle);
+        }
+
+        if (enable_rsk && current_cycle > lq_entry->fetch_issued_cycle + L1D_LATENCY) {
+          auto start_reschedule = false;
+          sim_stats.detected_load_misses++;
+          for (auto& rob_instr : ROB) {
+            if (!enable_rsk_branch) {
+              if (rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED) {
+                rob_instr.rescheduled = INFLIGHT;
+                rob_instr.scheduled = 0;
+                rob_instr.executed = 0;
+                rob_instr.event_cycle = current_cycle;
+
+                if (enable_rsk_dbg) {
+                  fmt::print("{} instr_id: {} is going to be rescheduled, current_cycle: {}\n", __func__, rob_instr.instr_id, current_cycle);
+                }
+              }
+            } else {
+              if ((rob_instr.is_branch || start_reschedule) && rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED) {
+                start_reschedule = true;
+                rob_instr.rescheduled = INFLIGHT;
+                rob_instr.scheduled = 0;
+                rob_instr.executed = 0;
+                rob_instr.event_cycle = current_cycle;
+
+                if (enable_rsk_dbg) {
+                  fmt::print("{} instr_id: {} is going to be rescheduled, current_cycle: {}\n", __func__, rob_instr.instr_id, current_cycle);
+                }
+              }
+            }
+          }
+        }
       }
     }
     ++progress;
@@ -621,12 +699,26 @@ long O3_CPU::handle_memory_return()
 
 long O3_CPU::retire_rob()
 {
-  auto [retire_begin, retire_end] = champsim::get_span_p(std::cbegin(ROB), std::cend(ROB), RETIRE_WIDTH, [](const auto& x) { return x.executed == COMPLETED; });
+  auto [retire_begin, retire_end] = champsim::get_span_p(std::cbegin(ROB), std::cend(ROB), RETIRE_WIDTH, [](const auto& x) { return x.executed == COMPLETED && x.rescheduled != INFLIGHT; });
   if constexpr (champsim::debug_print) {
     std::for_each(retire_begin, retire_end, [](const auto& x) { fmt::print("[ROB] retire_rob instr_id: {} is retired\n", x.instr_id); });
   }
   auto retire_count = std::distance(retire_begin, retire_end);
   num_retired += retire_count;
+
+  // Find the type of instruction
+  for (auto rob_it = retire_begin; rob_it != retire_end; ++rob_it) {
+    if (rob_it->is_branch) {
+      sim_stats.retired_branch[rob_it->branch_type]++;
+    } else if (rob_it->is_load) {
+      sim_stats.retired_load++;
+    } else if (rob_it->is_store) {
+      sim_stats.retired_store++;
+    } else {
+      sim_stats.retired_arithmetic++;
+    }
+  }
+
   ROB.erase(retire_begin, retire_end);
 
   return retire_count;

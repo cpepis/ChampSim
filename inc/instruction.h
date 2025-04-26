@@ -43,6 +43,8 @@ struct ooo_model_instr {
   uint64_t ip = 0;
   uint64_t event_cycle = 0;
 
+  bool is_load = 0;
+  bool is_store = 0;
   bool is_branch = 0;
   bool branch_taken = 0;
   bool branch_prediction = 0;
@@ -57,6 +59,7 @@ struct ooo_model_instr {
   uint8_t fetched = 0;
   uint8_t decoded = 0;
   uint8_t scheduled = 0;
+  uint8_t rescheduled = 0;
   uint8_t executed = 0;
 
   unsigned completed_mem_ops = 0;
@@ -67,6 +70,8 @@ struct ooo_model_instr {
 
   std::vector<uint64_t> destination_memory = {};
   std::vector<uint64_t> source_memory = {};
+
+  bool already_set_dependencies = false;
 
   // these are indices of instructions in the ROB that depend on me
   std::vector<std::reference_wrapper<ooo_model_instr>> registers_instrs_depend_on_me;
@@ -79,6 +84,10 @@ private:
     std::remove_copy(std::begin(instr.source_registers), std::end(instr.source_registers), std::back_inserter(this->source_registers), 0);
     std::remove_copy(std::begin(instr.destination_memory), std::end(instr.destination_memory), std::back_inserter(this->destination_memory), 0);
     std::remove_copy(std::begin(instr.source_memory), std::end(instr.source_memory), std::back_inserter(this->source_memory), 0);
+
+    // determine if this is a load or store
+    is_load = std::size(source_memory) > 0;
+    is_store = std::size(destination_memory) > 0;
 
     bool writes_sp = std::count(std::begin(destination_registers), std::end(destination_registers), champsim::REG_STACK_POINTER);
     bool writes_ip = std::count(std::begin(destination_registers), std::end(destination_registers), champsim::REG_INSTRUCTION_POINTER);

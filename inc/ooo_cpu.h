@@ -67,6 +67,19 @@ struct cpu_stats {
   uint64_t end_instrs = 0, end_cycles = 0;
   uint64_t total_rob_occupancy_at_branch_mispredict = 0;
 
+  uint64_t rescheduled_load = 0;
+  uint64_t rescheduled_store = 0;
+  uint64_t rescheduled_arithmetic = 0;
+  std::array<long long, 8> rescheduled_branch = {};
+
+  uint64_t retired_load = 0;
+  uint64_t retired_store = 0;
+  uint64_t retired_arithmetic = 0;
+  std::array<long long, 8> retired_branch = {};
+
+  uint64_t detected_load_misses = 0;
+  uint64_t deferred_execution_instrs = 0;
+
   std::array<long long, 8> total_branch_types = {};
   std::array<long long, 8> branch_type_misses = {};
 
@@ -82,6 +95,7 @@ struct LSQ_ENTRY {
 
   std::array<uint8_t, 2> asid = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
   bool fetch_issued = false;
+  uint64_t fetch_issued_cycle = 0;
 
   uint64_t producer_id = std::numeric_limits<uint64_t>::max();
   std::vector<std::reference_wrapper<std::optional<LSQ_ENTRY>>> lq_depend_on_me{};
