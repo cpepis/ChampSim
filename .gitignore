@@ -1,3 +1,4 @@
+.vscode/
 .csconfig/
 _configuration.mk
 
@@ -8,6 +9,8 @@ bin/
 
 **/*.o
 **/*.d
+
+temp/
 
 test/000-test-main
 
