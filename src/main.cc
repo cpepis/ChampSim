@@ -52,8 +52,33 @@ int main(int argc, char** argv)
       cpu.show_heartbeat = false;
   };
 
+  auto set_rsk_callback = [&](auto) {
+    for (O3_CPU& cpu : gen_environment.cpu_view())
+      cpu.enable_rsk = true;
+    fmt::print("Rescheduling enabled\n");
+  };
+
+  auto set_rsk_branch_callback = [&](auto) {
+    for (O3_CPU& cpu : gen_environment.cpu_view())
+      cpu.enable_rsk_branch = true;
+    fmt::print("Rescheduling only after a branch enabled\n");
+  };
+
+  auto set_rsk_dbg_callback = [&](auto) {
+    for (O3_CPU& cpu : gen_environment.cpu_view())
+      cpu.enable_rsk_dbg = true;
+
+    for (CACHE& cache : gen_environment.cache_view())
+      cache.enable_rsk_dbg = true;
+
+    fmt::print("Rescheduling debug output enabled\n");
+  };
+
   app.add_flag("-c,--cloudsuite", knob_cloudsuite, "Read all traces using the cloudsuite format");
   app.add_flag("--hide-heartbeat", set_heartbeat_callback, "Hide the heartbeat output");
+  app.add_flag("--rsk", set_rsk_callback, "Enable rescheduling");
+  app.add_flag("--rsk-branch", set_rsk_branch_callback, "Enable rescheduling for branches");
+  app.add_flag("--rsk-dbg", set_rsk_dbg_callback, "Enable rescheduling debug output");
   auto warmup_instr_option = app.add_option("-w,--warmup-instructions", warmup_instructions, "The number of instructions in the warmup phase");
   auto deprec_warmup_instr_option =
       app.add_option("--warmup_instructions", warmup_instructions, "[deprecated] use --warmup-instructions instead")->excludes(warmup_instr_option);

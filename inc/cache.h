@@ -155,6 +155,8 @@ class CACHE : public champsim::operable
   std::deque<tag_lookup_type> translation_stash{};
 
 public:
+  bool enable_rsk_dbg = false;
+
   std::vector<channel_type*> upper_levels;
   channel_type* lower_level;
   channel_type* lower_translate;

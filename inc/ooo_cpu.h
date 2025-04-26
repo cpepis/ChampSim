@@ -109,6 +109,9 @@ public:
   uint64_t num_retired = 0;
 
   bool show_heartbeat = true;
+  bool enable_rsk = false;
+  bool enable_rsk_branch = false;
+  bool enable_rsk_dbg = false;
 
   using stats_type = cpu_stats;
 
