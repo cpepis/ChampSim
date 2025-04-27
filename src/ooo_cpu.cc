@@ -518,6 +518,52 @@ long O3_CPU::operate_lsq()
 
   auto load_bw = LQ_WIDTH;
 
+  // Check for rescheduling
+  for (auto& lq_entry : LQ) {
+    if (enable_rsk && current_cycle > lq_entry->fetch_issued_cycle + L1D_LATENCY) {
+      auto start_reschedule = false;
+      sim_stats.detected_load_misses++;
+
+      // Track unique load misses
+      if (unique_loads.find(lq_entry->ip) == unique_loads.end()) {
+        if (unique_loads_misses.insert(lq_entry->ip).second) {
+          sim_stats.unique_load_misses++;
+        } else {
+          sim_stats.repeated_load_misses++;
+        }
+      } else {
+        sim_stats.repeated_load_misses++;
+      }
+
+      for (auto& rob_instr : ROB) {
+        if (!enable_rsk_branch) {
+          if (rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED) {
+            rob_instr.rescheduled = INFLIGHT;
+            rob_instr.scheduled = 0;
+            rob_instr.executed = 0;
+            rob_instr.event_cycle = current_cycle;
+
+            if (enable_rsk_dbg) {
+              fmt::print("{} instr_id: {} is going to be rescheduled, current_cycle: {}\n", __func__, rob_instr.instr_id, current_cycle);
+            }
+          }
+        } else {
+          if ((rob_instr.is_branch || start_reschedule) && rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED) {
+            start_reschedule = true;
+            rob_instr.rescheduled = INFLIGHT;
+            rob_instr.scheduled = 0;
+            rob_instr.executed = 0;
+            rob_instr.event_cycle = current_cycle;
+
+            if (enable_rsk_dbg) {
+              fmt::print("{} instr_id: {} is going to be rescheduled, current_cycle: {}\n", __func__, rob_instr.instr_id, current_cycle);
+            }
+          }
+        }
+      }
+    }
+  }
+
   for (auto& lq_entry : LQ) {
     if (load_bw > 0 && lq_entry.has_value() && lq_entry->producer_id == std::numeric_limits<uint64_t>::max() && !lq_entry->fetch_issued
         && lq_entry->event_cycle < current_cycle) {
@@ -671,49 +717,6 @@ long O3_CPU::handle_memory_return()
 
         if (enable_rsk_dbg) {
           fmt::print("{} instr_id: {} vaddr: {:#x} finished at cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address, current_cycle);
-        }
-
-        if (enable_rsk && current_cycle > lq_entry->fetch_issued_cycle + L1D_LATENCY) {
-          auto start_reschedule = false;
-          sim_stats.detected_load_misses++;
-
-          // Track unique load misses
-          if (unique_loads.find(lq_entry->ip) == unique_loads.end()) {
-            if (unique_loads_misses.insert(lq_entry->ip).second) {
-              sim_stats.unique_load_misses++;
-            } else {
-              sim_stats.repeated_load_misses++;
-            }
-          } else {
-            sim_stats.repeated_load_misses++;
-          }
-
-          for (auto& rob_instr : ROB) {
-            if (!enable_rsk_branch) {
-              if (rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED) {
-                rob_instr.rescheduled = INFLIGHT;
-                rob_instr.scheduled = 0;
-                rob_instr.executed = 0;
-                rob_instr.event_cycle = current_cycle;
-
-                if (enable_rsk_dbg) {
-                  fmt::print("{} instr_id: {} is going to be rescheduled, current_cycle: {}\n", __func__, rob_instr.instr_id, current_cycle);
-                }
-              }
-            } else {
-              if ((rob_instr.is_branch || start_reschedule) && rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED) {
-                start_reschedule = true;
-                rob_instr.rescheduled = INFLIGHT;
-                rob_instr.scheduled = 0;
-                rob_instr.executed = 0;
-                rob_instr.event_cycle = current_cycle;
-
-                if (enable_rsk_dbg) {
-                  fmt::print("{} instr_id: {} is going to be rescheduled, current_cycle: {}\n", __func__, rob_instr.instr_id, current_cycle);
-                }
-              }
-            }
-          }
         }
       }
     }
