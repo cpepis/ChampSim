@@ -676,6 +676,18 @@ long O3_CPU::handle_memory_return()
         if (enable_rsk && current_cycle > lq_entry->fetch_issued_cycle + L1D_LATENCY) {
           auto start_reschedule = false;
           sim_stats.detected_load_misses++;
+
+          // Track unique load misses
+          if (unique_loads.find(lq_entry->ip) == unique_loads.end()) {
+            if (unique_loads_misses.insert(lq_entry->ip).second) {
+              sim_stats.unique_load_misses++;
+            } else {
+              sim_stats.repeated_load_misses++;
+            }
+          } else {
+            sim_stats.repeated_load_misses++;
+          }
+
           for (auto& rob_instr : ROB) {
             if (!enable_rsk_branch) {
               if (rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED) {
@@ -733,6 +745,20 @@ long O3_CPU::retire_rob()
       sim_stats.retired_branch[rob_it->branch_type]++;
     } else if (rob_it->is_load) {
       sim_stats.retired_load++;
+
+      // Track unique loads
+      if (unique_loads.insert(rob_it->instr_id).second) {
+        sim_stats.unique_loads++;
+      }
+
+      // Track unique load addresses
+      for (auto addr : rob_it->source_memory) {
+        if (unique_loads_addresses.insert(addr).second) {
+          sim_stats.unique_load_addresses++;
+        } else {
+          sim_stats.repeated_load_addresses++;
+        }
+      }
     } else if (rob_it->is_store) {
       sim_stats.retired_store++;
     } else {

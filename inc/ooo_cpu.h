@@ -29,6 +29,7 @@
 #include <memory>
 #include <optional>
 #include <queue>
+#include <set>
 #include <stdexcept>
 #include <vector>
 
@@ -76,6 +77,12 @@ struct cpu_stats {
   uint64_t retired_store = 0;
   uint64_t retired_arithmetic = 0;
   std::array<long long, 8> retired_branch = {};
+
+  uint64_t unique_loads = 0;
+  uint64_t unique_load_misses = 0;
+  uint64_t unique_load_addresses = 0;
+  uint64_t repeated_load_misses = 0;
+  uint64_t repeated_load_addresses = 0;
 
   uint64_t merged_loads = 0;
   uint64_t detected_load_misses = 0;
@@ -148,6 +155,10 @@ public:
 
   std::vector<std::optional<LSQ_ENTRY>> LQ;
   std::deque<LSQ_ENTRY> SQ;
+
+  std::set<uint64_t> unique_loads;
+  std::set<uint64_t> unique_loads_misses;
+  std::set<uint64_t> unique_loads_addresses;
 
   std::array<std::vector<std::reference_wrapper<ooo_model_instr>>, std::numeric_limits<uint8_t>::max() + 1> reg_producers;
 
