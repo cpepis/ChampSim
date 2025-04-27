@@ -521,14 +521,27 @@ long O3_CPU::operate_lsq()
   for (auto& lq_entry : LQ) {
     if (load_bw > 0 && lq_entry.has_value() && lq_entry->producer_id == std::numeric_limits<uint64_t>::max() && !lq_entry->fetch_issued
         && lq_entry->event_cycle < current_cycle) {
-      auto success = execute_load(*lq_entry);
-      if (success) {
-        --load_bw;
-        lq_entry->fetch_issued = true;
-        lq_entry->fetch_issued_cycle = current_cycle;
+      // Check to see if this load was already issued
+      for (auto& lq_entry_check : LQ) {
+        if (lq_entry_check.has_value() && lq_entry_check->fetch_issued
+            && ((lq_entry_check->virtual_address >> LOG2_BLOCK_SIZE) == (lq_entry->virtual_address >> LOG2_BLOCK_SIZE))) {
+          lq_entry->fetch_issued = true;
+          lq_entry->fetch_issued_cycle = lq_entry_check->fetch_issued_cycle;
+          sim_stats.merged_loads++;
+          break;
+        }
+      }
 
-        if (enable_rsk_dbg) {
-          fmt::print("{} instr_id: {} vaddr: {:#x} fetch_issued at cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address, current_cycle);
+      if (!lq_entry->fetch_issued) {
+        auto success = execute_load(*lq_entry);
+        if (success) {
+          --load_bw;
+          lq_entry->fetch_issued = true;
+          lq_entry->fetch_issued_cycle = current_cycle;
+
+          if (enable_rsk_dbg) {
+            fmt::print("{} instr_id: {} vaddr: {:#x} fetch_issued at cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address, current_cycle);
+          }
         }
       }
     }
@@ -648,11 +661,13 @@ long O3_CPU::handle_memory_return()
 
   auto l1d_it = std::begin(L1D_bus.lower_level->returned);
   for (auto l1d_bw = L1D_BANDWIDTH; l1d_bw > 0 && l1d_it != std::end(L1D_bus.lower_level->returned); --l1d_bw, ++l1d_it) {
+    bool closed = false;
     for (auto& lq_entry : LQ) {
       if (lq_entry.has_value() && lq_entry->fetch_issued && lq_entry->virtual_address >> LOG2_BLOCK_SIZE == l1d_it->v_address >> LOG2_BLOCK_SIZE) {
         lq_entry->finish(std::begin(ROB), std::end(ROB));
         lq_entry.reset();
         ++progress;
+        closed = true;
 
         if (enable_rsk_dbg) {
           fmt::print("{} instr_id: {} vaddr: {:#x} finished at cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address, current_cycle);
@@ -690,6 +705,12 @@ long O3_CPU::handle_memory_return()
         }
       }
     }
+
+    if (!closed) {
+      fmt::print("[LSQ] {} Request arrived and didn't close LSQ, address: {} vaddress: {} cycle: {}\n", __func__, l1d_it->address, l1d_it->v_address, current_cycle);
+      print_deadlock();
+    }
+
     ++progress;
   }
   L1D_bus.lower_level->returned.erase(std::begin(L1D_bus.lower_level->returned), l1d_it);

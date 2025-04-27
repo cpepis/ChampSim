@@ -77,6 +77,7 @@ struct cpu_stats {
   uint64_t retired_arithmetic = 0;
   std::array<long long, 8> retired_branch = {};
 
+  uint64_t merged_loads = 0;
   uint64_t detected_load_misses = 0;
   uint64_t deferred_execution_instrs = 0;
 

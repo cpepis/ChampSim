@@ -66,6 +66,7 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
   fmt::print(stream, "STORE: {} ({:.3g}%)\n", stats.retired_store, ((double)stats.retired_store / stats.instrs()) * 100.0);
   fmt::print(stream, "ARITHMETIC: {} ({:.3g}%)\n\n", stats.retired_arithmetic, ((double)stats.retired_arithmetic / stats.instrs()) * 100.0);
 
+  fmt::print(stream, "Merged Loads: {}\n", stats.merged_loads);
   fmt::print(stream, "Dedected Load Misses: {}\n", stats.detected_load_misses);
   fmt::print(stream, "Deferred Execution Instructions: {}\n\n", stats.deferred_execution_instrs);
 }
