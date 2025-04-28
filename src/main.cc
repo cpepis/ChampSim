@@ -64,6 +64,14 @@ int main(int argc, char** argv)
     fmt::print("Rescheduling only after a branch enabled\n");
   };
 
+  auto set_rsk_predictor_callback = [&](auto) {
+    for (O3_CPU& cpu : gen_environment.cpu_view()) {
+      cpu.enable_rsk_predictor = true;
+      cpu.bf.setEnabled(true);
+    }
+    fmt::print("Rescheduling predictor enabled\n");
+  };
+
   auto set_rsk_dbg_callback = [&](auto) {
     for (O3_CPU& cpu : gen_environment.cpu_view())
       cpu.enable_rsk_dbg = true;
@@ -78,6 +86,7 @@ int main(int argc, char** argv)
   app.add_flag("--hide-heartbeat", set_heartbeat_callback, "Hide the heartbeat output");
   app.add_flag("--rsk", set_rsk_callback, "Enable rescheduling");
   app.add_flag("--rsk-branch", set_rsk_branch_callback, "Enable rescheduling for branches");
+  app.add_flag("--rsk-predictor", set_rsk_predictor_callback, "Enable rescheduling predictor");
   app.add_flag("--rsk-dbg", set_rsk_dbg_callback, "Enable rescheduling debug output");
   auto warmup_instr_option = app.add_option("-w,--warmup-instructions", warmup_instructions, "The number of instructions in the warmup phase");
   auto deprec_warmup_instr_option =
