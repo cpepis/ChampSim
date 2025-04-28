@@ -370,12 +370,8 @@ void O3_CPU::do_scheduling(ooo_model_instr& instr)
           instr.num_reg_dependent++;
         }
 
-        if (enable_rsk_dbg) {
-          fmt::print("{} instr_id: {} depends on: {} load: {}\n", __func__, instr.instr_id, prior.instr_id, prior.is_load);
-        }
-
-        if (enable_rsk_dbg) {
-          fmt::print("{} instr_id: {} src_reg: {} dst_reg: {}\n", __func__, instr.instr_id, src_reg, instr.destination_registers);
+        if (enable_rsk_dbg && prior.is_load) {
+          fmt::print("{} instr_id: {} depends on: {}\n", __func__, instr.instr_id, prior.instr_id);
         }
       }
     }
@@ -386,9 +382,11 @@ void O3_CPU::do_scheduling(ooo_model_instr& instr)
       auto ins = std::lower_bound(begin, end, instr, [](const ooo_model_instr& lhs, const ooo_model_instr& rhs) { return lhs.instr_id < rhs.instr_id; });
       reg_producers[dreg].insert(ins, std::ref(instr));
     }
+
+    instr.already_set_dependencies = true;
   }
 
-  if (enable_rsk && instr.already_set_dependencies && instr.rescheduled == INFLIGHT) {
+  if (enable_rsk && instr.rescheduled == INFLIGHT) {
     auto prev_event_cycle = instr.event_cycle;
     instr.event_cycle = std::max(instr.event_cycle, current_cycle + (warmup ? 0 : SCHEDULING_LATENCY));
     instr.rescheduled = COMPLETED;
@@ -411,7 +409,10 @@ void O3_CPU::do_scheduling(ooo_model_instr& instr)
   }
 
   instr.scheduled = COMPLETED;
-  instr.already_set_dependencies = true;
+
+  if (enable_rsk_dbg && instr.is_load) {
+    fmt::print("{} load_id: {} scheduled at cycle: {} current_cycle: {}\n", __func__, instr.instr_id, instr.event_cycle, current_cycle);
+  }
 }
 
 long O3_CPU::execute_instruction()
@@ -520,7 +521,7 @@ long O3_CPU::operate_lsq()
 
   // Check for rescheduling
   for (auto& lq_entry : LQ) {
-    if (enable_rsk && current_cycle > lq_entry->fetch_issued_cycle + L1D_LATENCY) {
+    if (enable_rsk && lq_entry.has_value() && lq_entry->fetch_issued && (current_cycle > (lq_entry->fetch_issued_cycle + L1D_LATENCY))) {
       auto start_reschedule = false;
       sim_stats.detected_load_misses++;
 
@@ -537,7 +538,7 @@ long O3_CPU::operate_lsq()
 
       for (auto& rob_instr : ROB) {
         if (!enable_rsk_branch) {
-          if (rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED) {
+          if (rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED && rob_instr.rescheduled != INFLIGHT) {
             rob_instr.rescheduled = INFLIGHT;
             rob_instr.scheduled = 0;
             rob_instr.executed = 0;
@@ -548,7 +549,8 @@ long O3_CPU::operate_lsq()
             }
           }
         } else {
-          if ((rob_instr.is_branch || start_reschedule) && rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED) {
+          if ((rob_instr.is_branch || start_reschedule) && rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED
+              && rob_instr.rescheduled != INFLIGHT) {
             start_reschedule = true;
             rob_instr.rescheduled = INFLIGHT;
             rob_instr.scheduled = 0;
@@ -650,6 +652,10 @@ void O3_CPU::do_complete_execution(ooo_model_instr& instr)
 
   instr.executed = COMPLETED;
 
+  if (enable_rsk_dbg) {
+    fmt::print("{} instr_id: {} executed at cycle: {} event_cycle: {}\n", __func__, instr.instr_id, current_cycle, instr.event_cycle);
+  }
+
   for (ooo_model_instr& dependent : instr.registers_instrs_depend_on_me) {
     dependent.num_reg_dependent--;
     assert(dependent.num_reg_dependent >= 0);
@@ -716,7 +722,19 @@ long O3_CPU::handle_memory_return()
         closed = true;
 
         if (enable_rsk_dbg) {
-          fmt::print("{} instr_id: {} vaddr: {:#x} finished at cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address, current_cycle);
+          fmt::print("{} instr_id: {} vaddr: {:#x} finished at cycle: {} event_cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address, current_cycle, lq_entry->event_cycle);
+        }
+
+        for (auto& rob_instr : ROB) {
+          if (rob_instr.instr_id == lq_entry->instr_id) {
+            if (enable_rsk_dbg) {
+              fmt::print("{} instr_id: {} scheduled {} executed {} completed_mem_ops {} num_mem_ops {}\n", __func__, rob_instr.instr_id, rob_instr.scheduled, rob_instr.executed, rob_instr.completed_mem_ops, rob_instr.num_mem_ops());
+            }
+          }
+        }
+
+        if (current_cycle > lq_entry->fetch_issued_cycle + L1D_LATENCY) {
+          sim_stats.load_misses++;
         }
       }
     }
@@ -744,6 +762,10 @@ long O3_CPU::retire_rob()
 
   // Find the type of instruction
   for (auto rob_it = retire_begin; rob_it != retire_end; ++rob_it) {
+    if (enable_rsk_dbg) {
+      fmt::print("[ROB] retire_rob instr_id: {} is retired at cycle: {} event_cycle: {}\n", rob_it->instr_id, current_cycle, rob_it->event_cycle);
+    }
+
     if (rob_it->is_branch) {
       sim_stats.retired_branch[rob_it->branch_type]++;
     } else if (rob_it->is_load) {

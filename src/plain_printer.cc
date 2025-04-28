@@ -72,6 +72,7 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
   fmt::print(stream, "Unique Load Addresses: {}\n", stats.unique_load_addresses);
   fmt::print(stream, "Repeated Load Addresses: {}\n\n", stats.repeated_load_addresses);
 
+  fmt::print(stream, "Load Misses: {}\n", stats.load_misses);
   fmt::print(stream, "Merged Loads: {}\n", stats.merged_loads);
   fmt::print(stream, "Dedected Load Misses: {}\n", stats.detected_load_misses);
   fmt::print(stream, "Deferred Execution Instructions: {}\n\n", stats.deferred_execution_instrs);
