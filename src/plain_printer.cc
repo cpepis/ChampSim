@@ -47,24 +47,24 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
 
   fmt::print(stream, "Branch type MPKI\n");
   for (auto [str, idx] : types)
-    fmt::print(stream, "{}: {:.3}\n", str, mpkis[idx]);
+    fmt::print(stream, "{}: {:.3}\n", "MPKI_" + std::string(str), mpkis[idx]);
   fmt::print(stream, "\n");
 
   fmt::print(stream, "Breakdown of Rescheduled Instructions by Type\n");
   for (auto [str, idx] : types) {
-    fmt::print(stream, "{}: {} ({:.3g}%)\n", str, stats.rescheduled_branch[idx], ((double)stats.rescheduled_branch[idx] / stats.instrs()) * 100.0);
+    fmt::print(stream, "{}: {} ({:.3g}%)\n", "RSK_" + std::string(str), stats.rescheduled_branch[idx], ((double)stats.rescheduled_branch[idx] / stats.instrs()) * 100.0);
   }
-  fmt::print(stream, "LOAD: {} ({:.3g}%)\n", stats.rescheduled_load, ((double)stats.rescheduled_load / stats.instrs()) * 100.0);
-  fmt::print(stream, "STORE: {} ({:.3g}%)\n", stats.rescheduled_store, ((double)stats.rescheduled_store / stats.instrs()) * 100.0);
-  fmt::print(stream, "ARITHMETIC: {} ({:.3g}%)\n\n", stats.rescheduled_arithmetic, ((double)stats.rescheduled_arithmetic / stats.instrs()) * 100.0);
+  fmt::print(stream, "RSK_LOAD: {} ({:.3g}%)\n", stats.rescheduled_load, ((double)stats.rescheduled_load / stats.instrs()) * 100.0);
+  fmt::print(stream, "RSK_STORE: {} ({:.3g}%)\n", stats.rescheduled_store, ((double)stats.rescheduled_store / stats.instrs()) * 100.0);
+  fmt::print(stream, "RSK_ARITHMETIC: {} ({:.3g}%)\n\n", stats.rescheduled_arithmetic, ((double)stats.rescheduled_arithmetic / stats.instrs()) * 100.0);
 
   fmt::print(stream, "Breakdown of Retired Instructions by Type\n");
   for (auto [str, idx] : types) {
-    fmt::print(stream, "{}: {} ({:.3g}%)\n", str, stats.retired_branch[idx], ((double)stats.retired_branch[idx] / stats.instrs()) * 100.0);
+    fmt::print(stream, "{}: {} ({:.3g}%)\n", "RETIRED_" + std::string(str), stats.retired_branch[idx], ((double)stats.retired_branch[idx] / stats.instrs()) * 100.0);
   }
-  fmt::print(stream, "LOAD: {} ({:.3g}%)\n", stats.retired_load, ((double)stats.retired_load / stats.instrs()) * 100.0);
-  fmt::print(stream, "STORE: {} ({:.3g}%)\n", stats.retired_store, ((double)stats.retired_store / stats.instrs()) * 100.0);
-  fmt::print(stream, "ARITHMETIC: {} ({:.3g}%)\n\n", stats.retired_arithmetic, ((double)stats.retired_arithmetic / stats.instrs()) * 100.0);
+  fmt::print(stream, "RETIRED_LOAD: {} ({:.3g}%)\n", stats.retired_load, ((double)stats.retired_load / stats.instrs()) * 100.0);
+  fmt::print(stream, "RETIRED_STORE: {} ({:.3g}%)\n", stats.retired_store, ((double)stats.retired_store / stats.instrs()) * 100.0);
+  fmt::print(stream, "RETIRED_ARITHMETIC: {} ({:.3g}%)\n\n", stats.retired_arithmetic, ((double)stats.retired_arithmetic / stats.instrs()) * 100.0);
 
   fmt::print(stream, "Unique Loads: {}\n", stats.unique_loads);
   fmt::print(stream, "Unique Load Misses: {}\n", stats.unique_load_misses);
