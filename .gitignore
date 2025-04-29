@@ -11,6 +11,9 @@ bin/
 **/*.d
 
 temp/
+results/
+jobs/*.log
+jobs/*.bak
 
 test/000-test-main
 
