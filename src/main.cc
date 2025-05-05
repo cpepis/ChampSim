@@ -67,7 +67,7 @@ int main(int argc, char** argv)
   auto set_rsk_predictor_callback = [&](auto) {
     for (O3_CPU& cpu : gen_environment.cpu_view()) {
       cpu.enable_rsk_predictor = true;
-      cpu.bf.setEnabled(true);
+      cpu.bloom_filter.setEnabled(true);
     }
     fmt::print("Rescheduling predictor enabled\n");
   };

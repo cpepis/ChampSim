@@ -725,22 +725,27 @@ long O3_CPU::handle_memory_return()
           fmt::print("{} instr_id: {} vaddr: {:#x} finished at cycle: {} event_cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address, current_cycle, lq_entry->event_cycle);
         }
 
+        std::vector<uint64_t> load_addresses;
         for (auto& rob_instr : ROB) {
           if (rob_instr.instr_id == lq_entry->instr_id) {
-            if (enable_rsk_dbg) {
-              fmt::print("{} instr_id: {} scheduled {} executed {} completed_mem_ops {} num_mem_ops {}\n", __func__, rob_instr.instr_id, rob_instr.scheduled, rob_instr.executed, rob_instr.completed_mem_ops, rob_instr.num_mem_ops());
-            }
+            load_addresses = rob_instr.source_memory;
           }
         }
 
         if (current_cycle > lq_entry->fetch_issued_cycle + L1D_LATENCY) {
+          if (!load_addresses.empty()) {
+            for (auto& addr : load_addresses) {
+              bloom_filter.insert(addr);
+            }
+          }
           sim_stats.load_misses++;
         }
       }
     }
 
     if (!closed) {
-      fmt::print("[LSQ] {} Request arrived and didn't close LSQ, address: {} vaddress: {} cycle: {}\n", __func__, l1d_it->address, l1d_it->v_address, current_cycle);
+      fmt::print("[LSQ] {} Request arrived and didn't close LSQ, address: {} vaddress: {} cycle: {}\n", __func__, l1d_it->address, l1d_it->v_address,
+                 current_cycle);
       print_deadlock();
     }
 
@@ -770,6 +775,9 @@ long O3_CPU::retire_rob()
       sim_stats.retired_branch[rob_it->branch_type]++;
     } else if (rob_it->is_load) {
       sim_stats.retired_load++;
+      for (auto addr : rob_it->source_memory) {
+        bloom_filter.insert(addr);
+      }
 
       // Track unique loads
       if (unique_loads.insert(rob_it->instr_id).second) {

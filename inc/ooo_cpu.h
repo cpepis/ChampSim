@@ -33,6 +33,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "bloom_filter.h"
 #include "champsim.h"
 #include "champsim_constants.h"
 #include "channel.h"
@@ -177,6 +178,7 @@ public:
 
   const long IN_QUEUE_SIZE = 2 * FETCH_WIDTH;
   std::deque<ooo_model_instr> input_queue;
+  BloomFilter bloom_filter;
 
   CacheBus L1I_bus, L1D_bus;
   CACHE* l1i;

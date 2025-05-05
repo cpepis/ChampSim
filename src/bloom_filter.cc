@@ -5,7 +5,7 @@
 
 BloomFilter::BloomFilter(size_t size, size_t maxEntries) : filter(size, false), filterSize(size), entriesSeen(0), maxEntries(maxEntries)
 {
-  fmt::print("[BLOOM] {}: Bloom filter size: {} max entries: {}\n", __func__, filterSize, maxEntries);
+  fmt::print("Bloom filter size: {} max entries: {}\n", filterSize, maxEntries);
 }
 
 void BloomFilter::setEnabled(bool enabled) { enable = enabled; }

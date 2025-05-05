@@ -62,11 +62,14 @@ else
     output_file="${trace_name}-$4.log"
 fi
 
+rm -rf bin
 make -j$(nproc)
 
 mkdir -p temp/bsl # baseline
 mkdir -p temp/rsk # rescheduling
 mkdir -p temp/rsk-branch # rescheduling only after a branch
+mkdir -p temp/rsk-predictor # rescheduling with predictor
+mkdir -p temp/rsk-branch-predictor # rescheduling with predictor only after a branch
 
 echo "Running Champsim with the following parameters:"
 echo "Trace file: $trace_file"
@@ -78,3 +81,5 @@ echo "Output file: $output_file"
 bin/champsim --warmup-instructions $w --simulation-instructions $s ${trace_file} >temp/bsl/${trace_name}.log &
 bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk ${trace_file} >temp/rsk/${trace_name}.log &
 bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --rsk-branch ${trace_file} >temp/rsk-branch/${trace_name}.log &
+bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --rsk-predictor ${trace_file} >temp/rsk-predictor/${trace_name}.log &
+bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --rsk-branch --rsk-predictor ${trace_file} >temp/rsk-branch-predictor/${trace_name}.log &
