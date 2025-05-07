@@ -11,7 +11,6 @@
             "ifetch_buffer_size": 192,
             "decode_buffer_size": 32,
             "dispatch_buffer_size": 144,
-            "register_file_size": 128,
             "rob_size": 512,
             "lq_size": 192,
             "sq_size": 114,

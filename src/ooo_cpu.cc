@@ -346,12 +346,6 @@ long O3_CPU::schedule_instruction()
   auto search_bw = SCHEDULER_SIZE;
   int progress{0};
   for (auto rob_it = std::begin(ROB); rob_it != std::end(ROB) && search_bw > 0; ++rob_it) {
-    unsigned long sources_to_allocate = std::count_if(rob_it->source_registers.begin(), rob_it->source_registers.end(),
-                                                      [&alloc = std::as_const(reg_allocator)](auto srcreg) { return !alloc.isAllocated(srcreg); });
-    if (reg_allocator.count_free_registers() < (sources_to_allocate + rob_it->destination_registers.size()) && !rob_it->already_set_dependencies) {
-      break;
-    }
-
     if (rob_it->scheduled == 0 || rob_it->rescheduled == INFLIGHT) {
       do_scheduling(*rob_it);
       ++progress;
@@ -368,14 +362,25 @@ void O3_CPU::do_scheduling(ooo_model_instr& instr)
 {
   // Mark register dependencies
   if (!instr.already_set_dependencies) {
-    for (auto& src_reg : instr.source_registers) {
-      // rename source register
-      src_reg = reg_allocator.rename_src_register(src_reg);
+    for (auto src_reg : instr.source_registers) {
+      if (!std::empty(reg_producers[src_reg])) {
+        ooo_model_instr& prior = reg_producers[src_reg].back();
+        if (prior.registers_instrs_depend_on_me.empty() || prior.registers_instrs_depend_on_me.back().get().instr_id != instr.instr_id) {
+          prior.registers_instrs_depend_on_me.push_back(instr);
+          instr.num_reg_dependent++;
+        }
+
+        if (enable_rsk_dbg && prior.is_load) {
+          fmt::print("{} instr_id: {} depends on: {}\n", __func__, instr.instr_id, prior.instr_id);
+        }
+      }
     }
 
-    for (auto& dreg : instr.destination_registers) {
-      // rename destination register
-      dreg = reg_allocator.rename_dest_register(dreg, instr.instr_id);
+    for (auto dreg : instr.destination_registers) {
+      auto begin = std::begin(reg_producers[dreg]);
+      auto end = std::end(reg_producers[dreg]);
+      auto ins = std::lower_bound(begin, end, instr, [](const ooo_model_instr& lhs, const ooo_model_instr& rhs) { return lhs.instr_id < rhs.instr_id; });
+      reg_producers[dreg].insert(ins, std::ref(instr));
     }
 
     instr.already_set_dependencies = true;
@@ -414,19 +419,15 @@ long O3_CPU::execute_instruction()
 {
   auto exec_bw = EXEC_WIDTH;
   for (auto rob_it = std::begin(ROB); rob_it != std::end(ROB) && exec_bw > 0; ++rob_it) {
-    if (rob_it->scheduled == COMPLETED && rob_it->executed == 0 && rob_it->event_cycle <= current_cycle) {
-      bool ready = std::all_of(std::begin(rob_it->source_registers), std::end(rob_it->source_registers),
-                               [&alloc = std::as_const(reg_allocator)](auto srcreg) { return alloc.isValid(srcreg); });
+    if (rob_it->scheduled == COMPLETED && rob_it->executed == 0 && rob_it->num_reg_dependent == 0 && rob_it->event_cycle <= current_cycle) {
 
       if (enable_rsk && rob_it->rescheduled == INFLIGHT) {
         sim_stats.deferred_execution_instrs++;
         continue;
       }
 
-      if (ready) {
-        do_execution(*rob_it);
-        --exec_bw;
-      }
+      do_execution(*rob_it);
+      --exec_bw;
     }
   }
 
@@ -642,8 +643,11 @@ bool O3_CPU::execute_load(const LSQ_ENTRY& lq_entry)
 void O3_CPU::do_complete_execution(ooo_model_instr& instr)
 {
   for (auto dreg : instr.destination_registers) {
-    // mark physical register's data as valid
-    reg_allocator.complete_dest_register(dreg);
+    auto begin = std::begin(reg_producers[dreg]);
+    auto end = std::end(reg_producers[dreg]);
+    auto elem = std::find_if(begin, end, [id = instr.instr_id](ooo_model_instr& x) { return x.instr_id == id; });
+    assert(elem != end);
+    reg_producers[dreg].erase(elem);
   }
 
   instr.executed = COMPLETED;
@@ -652,9 +656,16 @@ void O3_CPU::do_complete_execution(ooo_model_instr& instr)
     fmt::print("{} instr_id: {} executed at cycle: {} event_cycle: {}\n", __func__, instr.instr_id, current_cycle, instr.event_cycle);
   }
 
-  if (instr.branch_mispredicted) {
-    fetch_resume_cycle = current_cycle + BRANCH_MISPREDICT_PENALTY;
+  for (ooo_model_instr& dependent : instr.registers_instrs_depend_on_me) {
+    dependent.num_reg_dependent--;
+    assert(dependent.num_reg_dependent >= 0);
+
+    if (dependent.num_reg_dependent == 0)
+      dependent.scheduled = COMPLETED;
   }
+
+  if (instr.branch_mispredicted)
+    fetch_resume_cycle = current_cycle + BRANCH_MISPREDICT_PENALTY;
 }
 
 long O3_CPU::complete_inflight_instruction()
@@ -751,15 +762,6 @@ long O3_CPU::retire_rob()
   if constexpr (champsim::debug_print) {
     std::for_each(retire_begin, retire_end, [](const auto& x) { fmt::print("[ROB] retire_rob instr_id: {} is retired\n", x.instr_id); });
   }
-
-  // commit register writes to backend RAT
-  // and recycle the old physical registers
-  for (auto rob_it = retire_begin; rob_it != retire_end; ++rob_it) {
-    for (auto dreg : rob_it->destination_registers) {
-      reg_allocator.retire_dest_register(dreg);
-    }
-  }
-
   auto retire_count = std::distance(retire_begin, retire_end);
   num_retired += retire_count;
 
@@ -807,17 +809,14 @@ void O3_CPU::print_deadlock()
 {
   fmt::print("DEADLOCK! CPU {} cycle {}\n", cpu, current_cycle);
 
-  auto instr_pack = [this](const auto& entry) {
-    return std::tuple{entry.instr_id, +entry.fetched, +entry.scheduled, +entry.executed, reg_allocator.count_reg_dependencies(entry), entry.num_mem_ops() - entry.completed_mem_ops, entry.event_cycle};
+  auto instr_pack = [](const auto& entry) {
+    return std::tuple{entry.instr_id, +entry.fetched, +entry.scheduled, +entry.executed, +entry.num_reg_dependent, entry.num_mem_ops() - entry.completed_mem_ops, entry.event_cycle};
   };
   std::string_view instr_fmt{"instr_id: {} fetched: {} scheduled: {} executed: {} num_reg_dependent: {} num_mem_ops: {} event: {}"};
   champsim::range_print_deadlock(IFETCH_BUFFER, "cpu" + std::to_string(cpu) + "_IFETCH", instr_fmt, instr_pack);
   champsim::range_print_deadlock(DECODE_BUFFER, "cpu" + std::to_string(cpu) + "_DECODE", instr_fmt, instr_pack);
   champsim::range_print_deadlock(DISPATCH_BUFFER, "cpu" + std::to_string(cpu) + "_DISPATCH", instr_fmt, instr_pack);
   champsim::range_print_deadlock(ROB, "cpu" + std::to_string(cpu) + "_ROB", instr_fmt, instr_pack);
-
-  // print occupied physical registers
-  reg_allocator.print_deadlock();
 
   // print LSQ entries
   auto lq_pack = [](const auto& entry) {
