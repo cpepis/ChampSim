@@ -120,6 +120,11 @@ void O3_CPU::initialize_instruction()
     input_queue.pop_front();
 
     IFETCH_BUFFER.back().event_cycle = current_cycle;
+
+    if (enable_rsk_dbg) {
+      fmt::print("[IFETCH] instr_id: {} is_load: {} src: {} dst: {}\n", IFETCH_BUFFER.back().instr_id, IFETCH_BUFFER.back().is_load,
+                 fmt::join(IFETCH_BUFFER.back().source_registers, ", "), fmt::join(IFETCH_BUFFER.back().destination_registers, ", "));
+    }
   }
 }
 
@@ -347,8 +352,26 @@ long O3_CPU::schedule_instruction()
   int progress{0};
   for (auto rob_it = std::begin(ROB); rob_it != std::end(ROB) && search_bw > 0; ++rob_it) {
     if (rob_it->scheduled == 0 || rob_it->rescheduled == INFLIGHT) {
+      do_set_dependencies(*rob_it);
       do_scheduling(*rob_it);
       ++progress;
+
+      // bool found = false;
+      // for (auto& addr : rob_it->source_memory) {
+      //   assert(rob_it->is_load && "source_memory should only be used for loads");
+
+      //   found = bloom_filter.lookup(addr);
+      //   if (enable_rsk_dbg) {
+      //     fmt::print("[Bloom Filter] {} instr_id: {} addr: {:#x} found: {}\n", __func__, rob_it->instr_id, addr, found);
+      //   }
+      // }
+
+      // if (!enable_rsk_predictor || (found || rob_it->loads_depend_on.empty())) {
+      //   do_scheduling(*rob_it);
+      //   ++progress;
+      // } else {
+      //   --search_bw;
+      // }
     }
 
     if (rob_it->executed == 0)
@@ -358,34 +381,57 @@ long O3_CPU::schedule_instruction()
   return progress;
 }
 
-void O3_CPU::do_scheduling(ooo_model_instr& instr)
+void O3_CPU::do_set_dependencies(ooo_model_instr& instr)
 {
+  if (instr.already_set_dependencies)
+    return;
+
   // Mark register dependencies
-  if (!instr.already_set_dependencies) {
-    for (auto src_reg : instr.source_registers) {
-      if (!std::empty(reg_producers[src_reg])) {
-        ooo_model_instr& prior = reg_producers[src_reg].back();
-        if (prior.registers_instrs_depend_on_me.empty() || prior.registers_instrs_depend_on_me.back().get().instr_id != instr.instr_id) {
-          prior.registers_instrs_depend_on_me.push_back(instr);
-          instr.num_reg_dependent++;
-        }
-
-        if (enable_rsk_dbg && prior.is_load) {
-          fmt::print("{} instr_id: {} depends on: {}\n", __func__, instr.instr_id, prior.instr_id);
-        }
+  for (auto src_reg : instr.source_registers) {
+    if (!std::empty(reg_producers[src_reg])) {
+      ooo_model_instr& prior = reg_producers[src_reg].back();
+      if (prior.registers_instrs_depend_on_me.empty() || prior.registers_instrs_depend_on_me.back().get().instr_id != instr.instr_id) {
+        prior.registers_instrs_depend_on_me.push_back(instr);
+        instr.num_reg_dependent++;
       }
-    }
 
-    for (auto dreg : instr.destination_registers) {
-      auto begin = std::begin(reg_producers[dreg]);
-      auto end = std::end(reg_producers[dreg]);
-      auto ins = std::lower_bound(begin, end, instr, [](const ooo_model_instr& lhs, const ooo_model_instr& rhs) { return lhs.instr_id < rhs.instr_id; });
-      reg_producers[dreg].insert(ins, std::ref(instr));
-    }
+      // if (enable_rsk_predictor) {
+      //   if (prior.is_load) {
+      //     instr.loads_depend_on.push_back(prior.instr_id);
+      //   }
 
-    instr.already_set_dependencies = true;
+      //   for (auto& load : prior.loads_depend_on) {
+      //     if (std::find(std::begin(instr.loads_depend_on), std::end(instr.loads_depend_on), load) == std::end(instr.loads_depend_on)) {
+      //       instr.loads_depend_on.push_back(load);
+      //     }
+      //   }
+      // }
+
+      // if (enable_rsk_dbg) {
+      //   fmt::print("{} instr_id: {} depends on: {}\n", __func__, instr.instr_id, prior.instr_id);
+      //   if (!instr.loads_depend_on.empty()) {
+      //     fmt::print("{} instr_id: {} depends on load instruction(s): ", __func__, instr.instr_id);
+      //     for (auto& load : instr.loads_depend_on) {
+      //       fmt::print("{} ", load);
+      //     }
+      //     fmt::print("\n");
+      //   }
+      // }
+    }
   }
 
+  for (auto dreg : instr.destination_registers) {
+    auto begin = std::begin(reg_producers[dreg]);
+    auto end = std::end(reg_producers[dreg]);
+    auto ins = std::lower_bound(begin, end, instr, [](const ooo_model_instr& lhs, const ooo_model_instr& rhs) { return lhs.instr_id < rhs.instr_id; });
+    reg_producers[dreg].insert(ins, std::ref(instr));
+  }
+
+  instr.already_set_dependencies = true;
+}
+
+void O3_CPU::do_scheduling(ooo_model_instr& instr)
+{
   if (enable_rsk && instr.rescheduled == INFLIGHT) {
     auto prev_event_cycle = instr.event_cycle;
     instr.event_cycle = std::max(instr.event_cycle, current_cycle + (warmup ? 0 : SCHEDULING_LATENCY));
@@ -521,9 +567,15 @@ long O3_CPU::operate_lsq()
 
   // Check for rescheduling
   for (auto& lq_entry : LQ) {
-    if (enable_rsk && lq_entry.has_value() && lq_entry->fetch_issued && (current_cycle > (lq_entry->fetch_issued_cycle + L1D_LATENCY))) {
+    if (enable_rsk && lq_entry.has_value() && lq_entry->fetch_issued
+        && ((current_cycle > (lq_entry->fetch_issued_cycle + L1D_LATENCY)) && bloom_filter.lookup(lq_entry->virtual_address))) {
       auto start_reschedule = false;
       sim_stats.detected_load_misses++;
+
+      if (enable_rsk_dbg) {
+        fmt::print("{} instr_id: {} seems to be a load miss. fetch_issued_cycle: {} current_cycle: {} | L1D_LATENCY: {}\n", __func__, lq_entry->instr_id,
+                  lq_entry->fetch_issued_cycle, current_cycle, L1D_LATENCY);
+      }
 
       // Track unique load misses
       if (unique_loads.find(lq_entry->ip) == unique_loads.end()) {
@@ -576,6 +628,12 @@ long O3_CPU::operate_lsq()
           lq_entry->fetch_issued = true;
           lq_entry->fetch_issued_cycle = lq_entry_check->fetch_issued_cycle;
           sim_stats.merged_loads++;
+
+          if (enable_rsk_dbg) {
+            fmt::print("{} instr_id: {} vaddr: {:#x} merged with: {} vaddr: {:#x} fetch_issued_cycle: {}\n", __func__, lq_entry->instr_id,
+                       lq_entry->virtual_address, lq_entry_check->instr_id, lq_entry_check->virtual_address, lq_entry_check->fetch_issued_cycle);
+          }
+
           break;
         }
       }
@@ -664,6 +722,17 @@ void O3_CPU::do_complete_execution(ooo_model_instr& instr)
       dependent.scheduled = COMPLETED;
   }
 
+  // for (auto& rob_instr : ROB) {
+  //   for (auto& load : rob_instr.loads_depend_on) {
+  //     if (load == instr.instr_id) {
+  //       rob_instr.loads_depend_on.erase(std::remove(std::begin(rob_instr.loads_depend_on), std::end(rob_instr.loads_depend_on), load));
+  //       if (enable_rsk_dbg) {
+  //         fmt::print("{} instr_id: {} load_id: {} removed from loads_depend_on\n", __func__, rob_instr.instr_id, instr.instr_id);
+  //       }
+  //     }
+  //   }
+  // }
+
   if (instr.branch_mispredicted)
     fetch_resume_cycle = current_cycle + BRANCH_MISPREDICT_PENALTY;
 }
@@ -729,8 +798,23 @@ long O3_CPU::handle_memory_return()
         for (auto& rob_instr : ROB) {
           if (rob_instr.instr_id == lq_entry->instr_id) {
             load_addresses = rob_instr.source_memory;
+            break;
           }
         }
+
+        // Remove dependency on the load
+        // for (auto& rob_instr : ROB) {
+        //   if (rob_instr.instr_id > lq_entry->instr_id) {
+        //     for (auto& load : rob_instr.loads_depend_on) {
+        //       if (load == lq_entry->instr_id) {
+        //         rob_instr.loads_depend_on.erase(std::remove(std::begin(rob_instr.loads_depend_on), std::end(rob_instr.loads_depend_on), load));
+        //         if (enable_rsk_dbg) {
+        //           fmt::print("{} instr_id: {} load_id: {} removed from loads_depend_on\n", __func__, rob_instr.instr_id, lq_entry->instr_id);
+        //         }
+        //       }
+        //     }
+        //   }
+        // }
 
         if (current_cycle > lq_entry->fetch_issued_cycle + L1D_LATENCY) {
           if (!load_addresses.empty()) {
@@ -775,9 +859,6 @@ long O3_CPU::retire_rob()
       sim_stats.retired_branch[rob_it->branch_type]++;
     } else if (rob_it->is_load) {
       sim_stats.retired_load++;
-      for (auto addr : rob_it->source_memory) {
-        bloom_filter.insert(addr);
-      }
 
       // Track unique loads
       if (unique_loads.insert(rob_it->instr_id).second) {

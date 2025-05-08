@@ -72,7 +72,8 @@ struct ooo_model_instr {
   std::vector<uint64_t> source_memory = {};
 
   bool already_set_dependencies = false;
-
+  // std::vector<uint64_t> loads_depend_on = {};
+  
   // these are indices of instructions in the ROB that depend on me
   std::vector<std::reference_wrapper<ooo_model_instr>> registers_instrs_depend_on_me;
 
