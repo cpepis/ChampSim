@@ -568,7 +568,7 @@ long O3_CPU::operate_lsq()
   // Check for rescheduling
   for (auto& lq_entry : LQ) {
     if (enable_rsk && lq_entry.has_value() && lq_entry->fetch_issued
-        && ((current_cycle > (lq_entry->fetch_issued_cycle + L1D_LATENCY)) && bloom_filter.lookup(lq_entry->virtual_address))) {
+        && ((current_cycle > (lq_entry->fetch_issued_cycle + L1D_LATENCY)) && (!bloom_filter.isEnabled() || bloom_filter.lookup(lq_entry->virtual_address)))) {
       auto start_reschedule = false;
       sim_stats.detected_load_misses++;
 
