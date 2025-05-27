@@ -50,9 +50,11 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
     fmt::print(stream, "{}: {:.3}\n", "MPKI_" + std::string(str), mpkis[idx]);
   fmt::print(stream, "\n");
 
+  fmt::print(stream, "Rescheduled Events: {}\n", stats.rescheduled_events);
   fmt::print(stream, "Breakdown of Rescheduled Instructions by Type\n");
   for (auto [str, idx] : types) {
-    fmt::print(stream, "{}: {} ({:.3g}%)\n", "RSK_" + std::string(str), stats.rescheduled_branch[idx], ((double)stats.rescheduled_branch[idx] / stats.instrs()) * 100.0);
+    fmt::print(stream, "{}: {} ({:.3g}%)\n", "RSK_" + std::string(str), stats.rescheduled_branch[idx],
+               ((double)stats.rescheduled_branch[idx] / stats.instrs()) * 100.0);
   }
   fmt::print(stream, "RSK_LOAD: {} ({:.3g}%)\n", stats.rescheduled_load, ((double)stats.rescheduled_load / stats.instrs()) * 100.0);
   fmt::print(stream, "RSK_STORE: {} ({:.3g}%)\n", stats.rescheduled_store, ((double)stats.rescheduled_store / stats.instrs()) * 100.0);
@@ -60,22 +62,87 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
 
   fmt::print(stream, "Breakdown of Retired Instructions by Type\n");
   for (auto [str, idx] : types) {
-    fmt::print(stream, "{}: {} ({:.3g}%)\n", "RETIRED_" + std::string(str), stats.retired_branch[idx], ((double)stats.retired_branch[idx] / stats.instrs()) * 100.0);
+    fmt::print(stream, "{}: {} ({:.3g}%)\n", "RETIRED_" + std::string(str), stats.retired_branch[idx],
+               ((double)stats.retired_branch[idx] / stats.instrs()) * 100.0);
   }
   fmt::print(stream, "RETIRED_LOAD: {} ({:.3g}%)\n", stats.retired_load, ((double)stats.retired_load / stats.instrs()) * 100.0);
   fmt::print(stream, "RETIRED_STORE: {} ({:.3g}%)\n", stats.retired_store, ((double)stats.retired_store / stats.instrs()) * 100.0);
   fmt::print(stream, "RETIRED_ARITHMETIC: {} ({:.3g}%)\n\n", stats.retired_arithmetic, ((double)stats.retired_arithmetic / stats.instrs()) * 100.0);
 
-  fmt::print(stream, "Unique Loads: {}\n", stats.unique_loads);
-  fmt::print(stream, "Unique Load Misses: {}\n", stats.unique_load_misses);
-  fmt::print(stream, "Repeated Load Misses: {}\n", stats.repeated_load_misses);
-  fmt::print(stream, "Unique Load Addresses: {}\n", stats.unique_load_addresses);
-  fmt::print(stream, "Repeated Load Addresses: {}\n\n", stats.repeated_load_addresses);
+  fmt::print(stream, "Unique Loads Retired: {}\n", stats.unique_loads_retired);
+  fmt::print(stream, "Repeated Loads Retired: {}\n\n", stats.repeated_loads_retired);
 
-  fmt::print(stream, "Load Misses: {}\n", stats.load_misses);
+  // L1D Specific Stats
+  fmt::print(stream, "L1D Unique Load Hits: {}\n", stats.unique_load_l1d_hits);
+  fmt::print(stream, "L1D Repeated Load Hits: {}\n", stats.repeated_load_l1d_hits);
+  fmt::print(stream, "L1D Unique Load Misses: {}\n", stats.unique_load_l1d_misses);
+  fmt::print(stream, "L1D Repeated Load Misses: {}\n", stats.repeated_load_l1d_misses);
+
+  // L2C Specific Stats
+  fmt::print(stream, "L2C Unique Load Hits: {}\n", stats.unique_load_l2c_hits);
+  fmt::print(stream, "L2C Repeated Load Hits: {}\n", stats.repeated_load_l2c_hits);
+  fmt::print(stream, "L2C Unique Load Misses: {}\n", stats.unique_load_l2c_misses);
+  fmt::print(stream, "L2C Repeated Load Misses: {}\n", stats.repeated_load_l2c_misses);
+
+  // LLC Specific Stats
+  fmt::print(stream, "LLC Unique Load Hits: {}\n", stats.unique_load_llc_hits);
+  fmt::print(stream, "LLC Repeated Load Hits: {}\n", stats.repeated_load_llc_hits);
+  fmt::print(stream, "LLC Unique Load Misses: {}\n", stats.unique_load_llc_misses);
+  fmt::print(stream, "LLC Repeated Load Misses: {}\n", stats.repeated_load_llc_misses);
+
+  // Total Hits/Misses per level
+  fmt::print(stream, "Total L1D Hits: {}\n", stats.load_l1d_hits);
+  fmt::print(stream, "Total L1D Misses: {}\n", stats.load_l1d_misses);
+  fmt::print(stream, "Total L2C Hits: {}\n", stats.load_l2c_hits);
+  fmt::print(stream, "Total L2C Misses: {}\n", stats.load_l2c_misses);
+  fmt::print(stream, "Total LLC Hits: {}\n", stats.load_llc_hits);
+  fmt::print(stream, "Total LLC Misses: {}\n", stats.load_llc_misses);
+
   fmt::print(stream, "Merged Loads: {}\n", stats.merged_loads);
-  fmt::print(stream, "Dedected Load Misses: {}\n", stats.detected_load_misses);
+  fmt::print(stream, "Detected Load Misses: {}\n", stats.detected_load_misses);
   fmt::print(stream, "Deferred Execution Instructions: {}\n\n", stats.deferred_execution_instrs);
+
+  // Load Prediction Scenario Counts
+  fmt::print(stream, "Prediction Scenarios:\n");
+  fmt::print(stream, "  No Predictor L1D Miss (Reschedule): {}\n", stats.no_predictor_l1d_miss_reschedule);
+  fmt::print(stream, "  Predicted L1D Hit, Actual L1D Hit (No Reschedule): {}\n", stats.pred_l1d_hit_actual_l1d_hit);
+  fmt::print(stream, "  Predicted L1D Hit, Actual L1D Miss (Reschedule - FP): {}\n", stats.pred_l1d_hit_actual_l1d_miss_reschedule);
+  fmt::print(stream, "  Predicted L1D Miss, Actual L2C Hit (No Reschedule - TN for L1D): {}\n", stats.pred_l1d_miss_actual_l2c_hit);
+  fmt::print(stream, "  Predicted L1D Miss, Actual L2C Miss (Reschedule - Deeper Miss): {}\n", stats.pred_l1d_miss_actual_l2c_miss_reschedule);
+  fmt::print(stream, "  Predicted L1D Miss, Actual L1D Hit (Reschedule - FN): {}\n\n", stats.pred_l1d_miss_actual_l1d_hit_reschedule);
+
+  fmt::print(stream, "Average ROB Occupancy at rescheduled: {:.4g}\n", std::ceil(stats.total_rob_occupancy_at_reschedule) / stats.rescheduled_events);
+  fmt::print("Maximum Instructions Rescheduled in a Single Event: {}\n", stats.max_instructions_rescheduled);
+
+  // --- Calculate Total Predictions (and Correct/Incorrect) from Confusion Matrix ---
+  uint64_t total_predictions_from_confusion_matrix = stats.load_predictor_stats.true_positives + stats.load_predictor_stats.false_positives
+                                                     + stats.load_predictor_stats.true_negatives + stats.load_predictor_stats.false_negatives;
+
+  uint64_t correct_predictions_derived = stats.load_predictor_stats.true_positives + stats.load_predictor_stats.true_negatives;
+
+  uint64_t incorrect_predictions_derived = stats.load_predictor_stats.false_positives + stats.load_predictor_stats.false_negatives;
+  // -------------------------------------------------------------------------------
+
+  fmt::print("\n--- Load Predictor Statistics ---\n");
+  fmt::print("Total Predictions (from Confusion Matrix): {}\n", total_predictions_from_confusion_matrix);
+  // fmt::print("Predicted Hits (Aggressive): {}\n", stats.load_predictor_stats.predicted_hits);
+  // fmt::print("Predicted Misses (Non-Aggressive): {}\n", stats.load_predictor_stats.predicted_misses);
+
+  fmt::print("Correct Predictions: {}\n", correct_predictions_derived);
+  fmt::print("Incorrect Predictions: {}\n", incorrect_predictions_derived);
+
+  if (stats.load_predictor_stats.total_predictions > 0) {
+    double accuracy = static_cast<double>(correct_predictions_derived) / total_predictions_from_confusion_matrix * 100.0;
+    fmt::print("Overall Prediction Accuracy: {:.2f}%\n", accuracy);
+  }
+
+  fmt::print("Confusion Matrix:\n");
+  fmt::print("True Positives (Pred H, Act H): {}\n", stats.load_predictor_stats.true_positives);
+  fmt::print("True Negatives (Pred M, Act M): {}\n", stats.load_predictor_stats.true_negatives);
+  fmt::print("False Positives (Pred H, Act M): {}\n", stats.load_predictor_stats.false_positives);
+  fmt::print("False Negatives (Pred M, Act H): {}\n", stats.load_predictor_stats.false_negatives);
+
+  fmt::print("\n");
 }
 
 void champsim::plain_printer::print(CACHE::stats_type stats)

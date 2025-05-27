@@ -50,6 +50,8 @@ const auto default_core = O3_CPU::Builder{}
                               .l1i_bandwidth(1)
                               .l1d_bandwidth(1)
                               .l1d_latency(1)
+                              .l2c_latency(1)
+                              .llc_latency(1)
                               // Specifying default branch predictors and BTBs like this is probably dangerous
                               // since the names could change.
                               // We're doing it anyway, for now.

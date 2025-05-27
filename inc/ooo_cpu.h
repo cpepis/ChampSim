@@ -33,11 +33,12 @@
 #include <stdexcept>
 #include <vector>
 
-#include "bloom_filter.h"
 #include "champsim.h"
 #include "champsim_constants.h"
 #include "channel.h"
 #include "instruction.h"
+#include "load_predictor.h"
+#include "load_predictor_stats.h"
 #include "module_impl.h"
 #include "operable.h"
 #include "util/lru_table.h"
@@ -73,22 +74,60 @@ struct cpu_stats {
   uint64_t rescheduled_store = 0;
   uint64_t rescheduled_arithmetic = 0;
   std::array<long long, 8> rescheduled_branch = {};
+  uint64_t rescheduled_events = 0;
 
   uint64_t retired_load = 0;
   uint64_t retired_store = 0;
   uint64_t retired_arithmetic = 0;
   std::array<long long, 8> retired_branch = {};
 
-  uint64_t unique_loads = 0;
-  uint64_t unique_load_misses = 0;
-  uint64_t unique_load_addresses = 0;
-  uint64_t repeated_load_misses = 0;
-  uint64_t repeated_load_addresses = 0;
+  uint64_t unique_loads_retired = 0;
+  uint64_t repeated_loads_retired = 0;
 
-  uint64_t load_misses = 0;
+  // L1D Load Hits/Misses
+  uint64_t load_l1d_hits = 0;
+  uint64_t load_l1d_misses = 0;
+  // L2C Load Hits/Misses
+  uint64_t load_l2c_hits = 0;
+  uint64_t load_l2c_misses = 0;
+
+  // LLC Load Hits/Misses
+  uint64_t load_llc_hits = 0;
+  uint64_t load_llc_misses = 0;
+
+  // Unique/Repeated Load Hits/Misses for each level
+  // L1D
+  uint64_t unique_load_l1d_hits = 0;
+  uint64_t repeated_load_l1d_hits = 0;
+  uint64_t unique_load_l1d_misses = 0;
+  uint64_t repeated_load_l1d_misses = 0;
+
+  // L2C
+  uint64_t unique_load_l2c_hits = 0;
+  uint64_t repeated_load_l2c_hits = 0;
+  uint64_t unique_load_l2c_misses = 0;
+  uint64_t repeated_load_l2c_misses = 0;
+
+  // LLC
+  uint64_t unique_load_llc_hits = 0;
+  uint64_t repeated_load_llc_hits = 0;
+  uint64_t unique_load_llc_misses = 0;
+  uint64_t repeated_load_llc_misses = 0;
+
   uint64_t merged_loads = 0;
   uint64_t detected_load_misses = 0;
   uint64_t deferred_execution_instrs = 0;
+  uint64_t max_instructions_rescheduled = 0;
+  uint64_t total_rob_occupancy_at_reschedule = 0;
+  LoadPredictorStats load_predictor_stats;
+
+  // Load Prediction Scenario Counters
+  uint64_t no_predictor_l1d_miss_reschedule = 0;         // Corresponds to Scenario 1
+  uint64_t pred_l1d_hit_actual_l1d_hit = 0;              // Corresponds to Scenario 2
+  uint64_t pred_l1d_hit_actual_l1d_miss_reschedule = 0;  // Corresponds to Scenario 3 (False Positive)
+  uint64_t pred_l1d_miss_actual_l2c_hit = 0;             // Corresponds to Scenario 4
+  uint64_t pred_l1d_miss_actual_l2c_miss_reschedule = 0; // Corresponds to Scenario 5 (Deeper Miss)
+  uint64_t pred_l1d_miss_actual_l1d_hit_reschedule = 0;  // Corresponds to Scenario 6 (False Negative)
 
   std::array<long long, 8> total_branch_types = {};
   std::array<long long, 8> branch_type_misses = {};
@@ -104,8 +143,10 @@ struct LSQ_ENTRY {
   uint64_t event_cycle = 0;
 
   std::array<uint8_t, 2> asid = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
+  bool merged = false;
   bool fetch_issued = false;
   uint64_t fetch_issued_cycle = 0;
+  bool load_predictor_result = false;
 
   uint64_t producer_id = std::numeric_limits<uint64_t>::max();
   std::vector<std::reference_wrapper<std::optional<LSQ_ENTRY>>> lq_depend_on_me{};
@@ -119,6 +160,7 @@ class O3_CPU : public champsim::operable
 {
 public:
   uint32_t cpu = 0;
+  bool is_warmup = true;
 
   // cycle
   uint64_t begin_phase_cycle = 0;
@@ -135,7 +177,6 @@ public:
   bool show_heartbeat = true;
   bool enable_rsk = false;
   bool enable_rsk_branch = false;
-  bool enable_rsk_predictor = false;
   bool enable_rsk_dbg = false;
 
   using stats_type = cpu_stats;
@@ -159,9 +200,16 @@ public:
   std::vector<std::optional<LSQ_ENTRY>> LQ;
   std::deque<LSQ_ENTRY> SQ;
 
-  std::set<uint64_t> unique_loads;
-  std::set<uint64_t> unique_loads_misses;
-  std::set<uint64_t> unique_loads_addresses;
+  std::set<uint64_t> unique_loads_retired;
+
+  std::set<uint64_t> unique_loads_l1d_hits;
+  std::set<uint64_t> unique_loads_l1d_misses;
+
+  std::set<uint64_t> unique_loads_l2c_hits;
+  std::set<uint64_t> unique_loads_l2c_misses;
+
+  std::set<uint64_t> unique_loads_llc_hits;
+  std::set<uint64_t> unique_loads_llc_misses;
 
   std::array<std::vector<std::reference_wrapper<ooo_model_instr>>, std::numeric_limits<uint8_t>::max() + 1> reg_producers;
 
@@ -171,14 +219,14 @@ public:
   const long int LQ_WIDTH, SQ_WIDTH;
   const long int RETIRE_WIDTH;
   const unsigned BRANCH_MISPREDICT_PENALTY, DISPATCH_LATENCY, DECODE_LATENCY, SCHEDULING_LATENCY, EXEC_LATENCY;
-  const long int L1I_BANDWIDTH, L1D_BANDWIDTH, L1D_LATENCY;
+  const long int L1I_BANDWIDTH, L1D_BANDWIDTH, L1D_LATENCY, L2C_LATENCY, LLC_LATENCY;
 
   // branch
   uint64_t fetch_resume_cycle = 0;
 
   const long IN_QUEUE_SIZE = 2 * FETCH_WIDTH;
   std::deque<ooo_model_instr> input_queue;
-  BloomFilter bloom_filter;
+  LoadPredictor* load_predictor = nullptr;
 
   CacheBus L1I_bus, L1D_bus;
   CACHE* l1i;
@@ -305,6 +353,8 @@ public:
     long int m_l1i_bw{};
     long int m_l1d_bw{};
     long int m_l1d_latency{};
+    long int m_l2c_latency{};
+    long int m_llc_latency{};
     champsim::channel* m_fetch_queues{};
     champsim::channel* m_data_queues{};
 
@@ -319,7 +369,8 @@ public:
           m_schedule_width(other.m_schedule_width), m_execute_width(other.m_execute_width), m_lq_width(other.m_lq_width), m_sq_width(other.m_sq_width),
           m_retire_width(other.m_retire_width), m_mispredict_penalty(other.m_mispredict_penalty), m_decode_latency(other.m_decode_latency),
           m_dispatch_latency(other.m_dispatch_latency), m_schedule_latency(other.m_schedule_latency), m_execute_latency(other.m_execute_latency),
-          m_l1i(other.m_l1i), m_l1i_bw(other.m_l1i_bw), m_l1d_bw(other.m_l1d_bw), m_l1d_latency(other.m_l1d_latency), m_fetch_queues(other.m_fetch_queues), m_data_queues(other.m_data_queues)
+          m_l1i(other.m_l1i), m_l1i_bw(other.m_l1i_bw), m_l1d_bw(other.m_l1d_bw), m_l1d_latency(other.m_l1d_latency), m_l2c_latency(other.m_l2c_latency),
+          m_llc_latency(other.m_llc_latency), m_fetch_queues(other.m_fetch_queues), m_data_queues(other.m_data_queues)
     {
     }
 
@@ -466,6 +517,16 @@ public:
       m_l1d_latency = l1d_latency_;
       return *this;
     }
+    self_type& l2c_latency(long int l2c_latency_)
+    {
+      m_l2c_latency = l2c_latency_;
+      return *this;
+    }
+    self_type& llc_latency(long int llc_latency_)
+    {
+      m_llc_latency = llc_latency_;
+      return *this;
+    }
     self_type& fetch_queues(champsim::channel* fetch_queues_)
     {
       m_fetch_queues = fetch_queues_;
@@ -496,8 +557,9 @@ public:
         ROB_SIZE(b.m_rob_size), SQ_SIZE(b.m_sq_size), FETCH_WIDTH(b.m_fetch_width), DECODE_WIDTH(b.m_decode_width), DISPATCH_WIDTH(b.m_dispatch_width),
         SCHEDULER_SIZE(b.m_schedule_width), EXEC_WIDTH(b.m_execute_width), LQ_WIDTH(b.m_lq_width), SQ_WIDTH(b.m_sq_width), RETIRE_WIDTH(b.m_retire_width),
         BRANCH_MISPREDICT_PENALTY(b.m_mispredict_penalty), DISPATCH_LATENCY(b.m_dispatch_latency), DECODE_LATENCY(b.m_decode_latency),
-        SCHEDULING_LATENCY(b.m_schedule_latency), EXEC_LATENCY(b.m_execute_latency), L1I_BANDWIDTH(b.m_l1i_bw), L1D_BANDWIDTH(b.m_l1d_bw), L1D_LATENCY(b.m_l1d_latency),
-        L1I_bus(b.m_cpu, b.m_fetch_queues), L1D_bus(b.m_cpu, b.m_data_queues), l1i(b.m_l1i), module_pimpl(std::make_unique<module_model<B_FLAG, T_FLAG>>(this))
+        SCHEDULING_LATENCY(b.m_schedule_latency), EXEC_LATENCY(b.m_execute_latency), L1I_BANDWIDTH(b.m_l1i_bw), L1D_BANDWIDTH(b.m_l1d_bw),
+        L1D_LATENCY(b.m_l1d_latency), L2C_LATENCY(b.m_l2c_latency), LLC_LATENCY(b.m_llc_latency), L1I_bus(b.m_cpu, b.m_fetch_queues),
+        L1D_bus(b.m_cpu, b.m_data_queues), l1i(b.m_l1i), module_pimpl(std::make_unique<module_model<B_FLAG, T_FLAG>>(this))
   {
   }
 };

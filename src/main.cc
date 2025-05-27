@@ -23,6 +23,7 @@
 #include "champsim.h"
 #include "champsim_constants.h"
 #include "core_inst.inc"
+#include "local_predictor.h"
 #include "phase_info.h"
 #include "stats_printer.h"
 #include "tracereader.h"
@@ -64,14 +65,6 @@ int main(int argc, char** argv)
     fmt::print("Rescheduling only after a branch enabled\n");
   };
 
-  auto set_rsk_predictor_callback = [&](auto) {
-    for (O3_CPU& cpu : gen_environment.cpu_view()) {
-      cpu.enable_rsk_predictor = true;
-      cpu.bloom_filter.setEnabled(true);
-    }
-    fmt::print("Rescheduling predictor enabled\n");
-  };
-
   auto set_rsk_dbg_callback = [&](auto) {
     for (O3_CPU& cpu : gen_environment.cpu_view())
       cpu.enable_rsk_dbg = true;
@@ -84,10 +77,19 @@ int main(int argc, char** argv)
 
   app.add_flag("-c,--cloudsuite", knob_cloudsuite, "Read all traces using the cloudsuite format");
   app.add_flag("--hide-heartbeat", set_heartbeat_callback, "Hide the heartbeat output");
+
   app.add_flag("--rsk", set_rsk_callback, "Enable rescheduling");
   app.add_flag("--rsk-branch", set_rsk_branch_callback, "Enable rescheduling for branches");
-  app.add_flag("--rsk-predictor", set_rsk_predictor_callback, "Enable rescheduling predictor");
   app.add_flag("--rsk-dbg", set_rsk_dbg_callback, "Enable rescheduling debug output");
+
+  std::string load_predictor;
+  app.add_option("--load-predictor", load_predictor, "Select load predictor (local, gshare, gskew, hybrid, globalcounter, pif, pap, bloomfilter)");
+  app.callback([&] {
+    for (O3_CPU& cpu : gen_environment.cpu_view()) {
+      cpu.load_predictor = create_predictor(load_predictor, cpu.sim_stats.load_predictor_stats);
+    }
+  });
+
   auto warmup_instr_option = app.add_option("-w,--warmup-instructions", warmup_instructions, "The number of instructions in the warmup phase");
   auto deprec_warmup_instr_option =
       app.add_option("--warmup_instructions", warmup_instructions, "[deprecated] use --warmup-instructions instead")->excludes(warmup_instr_option);

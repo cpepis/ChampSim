@@ -67,6 +67,23 @@ long O3_CPU::operate()
     last_heartbeat_cycle = current_cycle;
   }
 
+  if (!warmup && is_warmup) {
+    is_warmup = false;
+
+    unique_loads_retired.clear();
+
+    unique_loads_l1d_hits.clear();
+    unique_loads_l1d_misses.clear();
+  
+    unique_loads_l2c_hits.clear();
+    unique_loads_l2c_misses.clear();
+
+    unique_loads_llc_hits.clear();
+    unique_loads_llc_misses.clear();
+
+    load_predictor->reset();
+  }
+
   return progress;
 }
 
@@ -355,23 +372,6 @@ long O3_CPU::schedule_instruction()
       do_set_dependencies(*rob_it);
       do_scheduling(*rob_it);
       ++progress;
-
-      // bool found = false;
-      // for (auto& addr : rob_it->source_memory) {
-      //   assert(rob_it->is_load && "source_memory should only be used for loads");
-
-      //   found = bloom_filter.lookup(addr);
-      //   if (enable_rsk_dbg) {
-      //     fmt::print("[Bloom Filter] {} instr_id: {} addr: {:#x} found: {}\n", __func__, rob_it->instr_id, addr, found);
-      //   }
-      // }
-
-      // if (!enable_rsk_predictor || (found || rob_it->loads_depend_on.empty())) {
-      //   do_scheduling(*rob_it);
-      //   ++progress;
-      // } else {
-      //   --search_bw;
-      // }
     }
 
     if (rob_it->executed == 0)
@@ -394,29 +394,6 @@ void O3_CPU::do_set_dependencies(ooo_model_instr& instr)
         prior.registers_instrs_depend_on_me.push_back(instr);
         instr.num_reg_dependent++;
       }
-
-      // if (enable_rsk_predictor) {
-      //   if (prior.is_load) {
-      //     instr.loads_depend_on.push_back(prior.instr_id);
-      //   }
-
-      //   for (auto& load : prior.loads_depend_on) {
-      //     if (std::find(std::begin(instr.loads_depend_on), std::end(instr.loads_depend_on), load) == std::end(instr.loads_depend_on)) {
-      //       instr.loads_depend_on.push_back(load);
-      //     }
-      //   }
-      // }
-
-      // if (enable_rsk_dbg) {
-      //   fmt::print("{} instr_id: {} depends on: {}\n", __func__, instr.instr_id, prior.instr_id);
-      //   if (!instr.loads_depend_on.empty()) {
-      //     fmt::print("{} instr_id: {} depends on load instruction(s): ", __func__, instr.instr_id);
-      //     for (auto& load : instr.loads_depend_on) {
-      //       fmt::print("{} ", load);
-      //     }
-      //     fmt::print("\n");
-      //   }
-      // }
     }
   }
 
@@ -565,59 +542,6 @@ long O3_CPU::operate_lsq()
 
   auto load_bw = LQ_WIDTH;
 
-  // Check for rescheduling
-  for (auto& lq_entry : LQ) {
-    if (enable_rsk && lq_entry.has_value() && lq_entry->fetch_issued
-        && ((current_cycle > (lq_entry->fetch_issued_cycle + L1D_LATENCY)) && (!bloom_filter.isEnabled() || bloom_filter.lookup(lq_entry->virtual_address)))) {
-      auto start_reschedule = false;
-      sim_stats.detected_load_misses++;
-
-      if (enable_rsk_dbg) {
-        fmt::print("{} instr_id: {} seems to be a load miss. fetch_issued_cycle: {} current_cycle: {} | L1D_LATENCY: {}\n", __func__, lq_entry->instr_id,
-                  lq_entry->fetch_issued_cycle, current_cycle, L1D_LATENCY);
-      }
-
-      // Track unique load misses
-      if (unique_loads.find(lq_entry->ip) == unique_loads.end()) {
-        if (unique_loads_misses.insert(lq_entry->ip).second) {
-          sim_stats.unique_load_misses++;
-        } else {
-          sim_stats.repeated_load_misses++;
-        }
-      } else {
-        sim_stats.repeated_load_misses++;
-      }
-
-      for (auto& rob_instr : ROB) {
-        if (!enable_rsk_branch) {
-          if (rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED && rob_instr.rescheduled != INFLIGHT) {
-            rob_instr.rescheduled = INFLIGHT;
-            rob_instr.scheduled = 0;
-            rob_instr.executed = 0;
-            rob_instr.event_cycle = current_cycle;
-
-            if (enable_rsk_dbg) {
-              fmt::print("{} instr_id: {} is going to be rescheduled, current_cycle: {}\n", __func__, rob_instr.instr_id, current_cycle);
-            }
-          }
-        } else {
-          if ((rob_instr.is_branch || start_reschedule) && rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED
-              && rob_instr.rescheduled != INFLIGHT) {
-            start_reschedule = true;
-            rob_instr.rescheduled = INFLIGHT;
-            rob_instr.scheduled = 0;
-            rob_instr.executed = 0;
-            rob_instr.event_cycle = current_cycle;
-
-            if (enable_rsk_dbg) {
-              fmt::print("{} instr_id: {} is going to be rescheduled, current_cycle: {}\n", __func__, rob_instr.instr_id, current_cycle);
-            }
-          }
-        }
-      }
-    }
-  }
-
   for (auto& lq_entry : LQ) {
     if (load_bw > 0 && lq_entry.has_value() && lq_entry->producer_id == std::numeric_limits<uint64_t>::max() && !lq_entry->fetch_issued
         && lq_entry->event_cycle < current_cycle) {
@@ -627,6 +551,8 @@ long O3_CPU::operate_lsq()
             && ((lq_entry_check->virtual_address >> LOG2_BLOCK_SIZE) == (lq_entry->virtual_address >> LOG2_BLOCK_SIZE))) {
           lq_entry->fetch_issued = true;
           lq_entry->fetch_issued_cycle = lq_entry_check->fetch_issued_cycle;
+
+          lq_entry->merged = true;
           sim_stats.merged_loads++;
 
           if (enable_rsk_dbg) {
@@ -644,7 +570,8 @@ long O3_CPU::operate_lsq()
           --load_bw;
           lq_entry->fetch_issued = true;
           lq_entry->fetch_issued_cycle = current_cycle;
-
+          lq_entry->load_predictor_result = load_predictor->predict(lq_entry->ip, lq_entry->virtual_address);
+          sim_stats.detected_load_misses += (!lq_entry->load_predictor_result) ? 1 : 0;
           if (enable_rsk_dbg) {
             fmt::print("{} instr_id: {} vaddr: {:#x} fetch_issued at cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address, current_cycle);
           }
@@ -722,17 +649,6 @@ void O3_CPU::do_complete_execution(ooo_model_instr& instr)
       dependent.scheduled = COMPLETED;
   }
 
-  // for (auto& rob_instr : ROB) {
-  //   for (auto& load : rob_instr.loads_depend_on) {
-  //     if (load == instr.instr_id) {
-  //       rob_instr.loads_depend_on.erase(std::remove(std::begin(rob_instr.loads_depend_on), std::end(rob_instr.loads_depend_on), load));
-  //       if (enable_rsk_dbg) {
-  //         fmt::print("{} instr_id: {} load_id: {} removed from loads_depend_on\n", __func__, rob_instr.instr_id, instr.instr_id);
-  //       }
-  //     }
-  //   }
-  // }
-
   if (instr.branch_mispredicted)
     fetch_resume_cycle = current_cycle + BRANCH_MISPREDICT_PENALTY;
 }
@@ -782,55 +698,209 @@ long O3_CPU::handle_memory_return()
 
   auto l1d_it = std::begin(L1D_bus.lower_level->returned);
   for (auto l1d_bw = L1D_BANDWIDTH; l1d_bw > 0 && l1d_it != std::end(L1D_bus.lower_level->returned); --l1d_bw, ++l1d_it) {
-    bool closed = false;
+    bool closed_current_request = false;
     for (auto& lq_entry : LQ) {
       if (lq_entry.has_value() && lq_entry->fetch_issued && lq_entry->virtual_address >> LOG2_BLOCK_SIZE == l1d_it->v_address >> LOG2_BLOCK_SIZE) {
         lq_entry->finish(std::begin(ROB), std::end(ROB));
-        lq_entry.reset();
         ++progress;
-        closed = true;
+        closed_current_request = true; // This request found its matching LQ entry
 
         if (enable_rsk_dbg) {
-          fmt::print("{} instr_id: {} vaddr: {:#x} finished at cycle: {} event_cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address, current_cycle, lq_entry->event_cycle);
+          fmt::print("{} instr_id: {} vaddr: {:#x} finished at cycle: {} event_cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address,
+                     current_cycle, lq_entry->event_cycle);
         }
 
-        std::vector<uint64_t> load_addresses;
-        for (auto& rob_instr : ROB) {
-          if (rob_instr.instr_id == lq_entry->instr_id) {
-            load_addresses = rob_instr.source_memory;
-            break;
+        if (lq_entry->merged) {
+          // If this load was merged, we do not need to process it further
+          lq_entry.reset();
+          continue;
+        }
+
+        // Get the original prediction result
+        bool lp_prediction = lq_entry->load_predictor_result;
+
+        // Determine the actual hit level based on return time
+        bool actual_l1d_hit = (current_cycle <= lq_entry->fetch_issued_cycle + L1D_LATENCY);
+        bool actual_l2c_hit = (!actual_l1d_hit && (current_cycle <= lq_entry->fetch_issued_cycle + L2C_LATENCY));
+        bool actual_llc_hit = (!actual_l1d_hit && !actual_l2c_hit && (current_cycle <= lq_entry->fetch_issued_cycle + LLC_LATENCY));
+        bool actual_dram_hit = (!actual_l1d_hit && !actual_l2c_hit && !actual_llc_hit);
+
+        // Update the load predictor's internal state and its general statistics
+        load_predictor->update(lq_entry->ip, lq_entry->virtual_address, actual_l1d_hit, lp_prediction);
+
+        // Update overall CPU stats for actual load hits/misses
+        if (actual_l1d_hit) { // This load hit in L1D
+          sim_stats.load_l1d_hits++;
+          if (unique_loads_l1d_hits.insert(lq_entry->ip).second) {
+            sim_stats.unique_load_l1d_hits++;
+          } else {
+            sim_stats.repeated_load_l1d_hits++;
+          }
+        } else if (actual_l2c_hit) { // This load missed L1D, but hit in L2C
+          // It's an L1D miss
+          sim_stats.load_l1d_misses++;
+          if (unique_loads_l1d_misses.insert(lq_entry->ip).second) {
+            sim_stats.unique_load_l1d_misses++;
+          } else {
+            sim_stats.repeated_load_l1d_misses++;
+          }
+          // It's an L2C hit
+          sim_stats.load_l2c_hits++; // Increment L2C total hits
+          if (unique_loads_l2c_hits.insert(lq_entry->ip).second) {
+            sim_stats.unique_load_l2c_hits++;
+          } else {
+            sim_stats.repeated_load_l2c_hits++;
+          }
+        } else if (actual_llc_hit) { // This load missed L1D and L2C, but hit in LLC
+          // It's an L1D miss
+          sim_stats.load_l1d_misses++; // Increment L1D total misses
+          if (unique_loads_l1d_misses.insert(lq_entry->ip).second) {
+            sim_stats.unique_load_l1d_misses++;
+          } else {
+            sim_stats.repeated_load_l1d_misses++;
+          }
+          // It's an L2C miss
+          sim_stats.load_l2c_misses++; // Increment L2C total misses
+          if (unique_loads_l2c_misses.insert(lq_entry->ip).second) {
+            sim_stats.unique_load_l2c_misses++;
+          } else {
+            sim_stats.repeated_load_l2c_misses++;
+          }
+          // It's an LLC hit
+          sim_stats.load_llc_hits++; // Increment LLC total hits
+          if (unique_loads_llc_hits.insert(lq_entry->ip).second) {
+            sim_stats.unique_load_llc_hits++;
+          } else {
+            sim_stats.repeated_load_llc_hits++;
+          }
+        } else if (actual_dram_hit) { // This load missed all caches and went to DRAM
+          // It's an L1D miss
+          sim_stats.load_l1d_misses++; // Increment L1D total misses
+          if (unique_loads_l1d_misses.insert(lq_entry->ip).second) {
+            sim_stats.unique_load_l1d_misses++;
+          } else {
+            sim_stats.repeated_load_l1d_misses++;
+          }
+          // It's an L2C miss
+          sim_stats.load_l2c_misses++; // Increment L2C total misses
+          if (unique_loads_l2c_misses.insert(lq_entry->ip).second) {
+            sim_stats.unique_load_l2c_misses++;
+          } else {
+            sim_stats.repeated_load_l2c_misses++;
+          }
+          // It's an LLC miss
+          sim_stats.load_llc_misses++; // Increment LLC total misses
+          if (unique_loads_llc_misses.insert(lq_entry->ip).second) {
+            sim_stats.unique_load_llc_misses++;
+          } else {
+            sim_stats.repeated_load_llc_misses++;
           }
         }
 
-        // Remove dependency on the load
-        // for (auto& rob_instr : ROB) {
-        //   if (rob_instr.instr_id > lq_entry->instr_id) {
-        //     for (auto& load : rob_instr.loads_depend_on) {
-        //       if (load == lq_entry->instr_id) {
-        //         rob_instr.loads_depend_on.erase(std::remove(std::begin(rob_instr.loads_depend_on), std::end(rob_instr.loads_depend_on), load));
-        //         if (enable_rsk_dbg) {
-        //           fmt::print("{} instr_id: {} load_id: {} removed from loads_depend_on\n", __func__, rob_instr.instr_id, lq_entry->instr_id);
-        //         }
-        //       }
-        //     }
-        //   }
-        // }
+        // --- Determine if Rescheduling is Needed ---
+        bool shall_reschedule = false;
 
-        if (current_cycle > lq_entry->fetch_issued_cycle + L1D_LATENCY) {
-          if (!load_addresses.empty()) {
-            for (auto& addr : load_addresses) {
-              bloom_filter.insert(addr);
+        // Scenario 1: Aggressive timeout for loads when predictor is DISABLED
+        // This is a policy for a baseline without prediction-driven speculation
+        if (enable_rsk && !load_predictor->isEnabled() && !actual_l1d_hit) {
+          sim_stats.no_predictor_l1d_miss_reschedule++;
+          shall_reschedule = true;
+          if (enable_rsk_dbg) {
+            fmt::print("[RESCHEDULE_POLICY] Predictor disabled, load was a miss. Rescheduling.\n");
+          }
+        }
+        // Scenario 2: Predict L1D hit - is L1D hit
+        else if (enable_rsk && load_predictor->isEnabled() && lp_prediction == true && actual_l1d_hit == true) {
+          sim_stats.pred_l1d_hit_actual_l1d_hit++;
+          shall_reschedule = false; // No penalty
+          if (enable_rsk_dbg) {
+            fmt::print("[NO_RESCHEDULE] Scenario 2: Pred L1D H, Act L1D H. Instr_id: {}\n", lq_entry->instr_id);
+          }
+        }
+        // Scenario 3: Predict L1D hit - is L1D miss (False Positive for L1D)
+        // This covers L2C, LLC, or DRAM hits
+        else if (enable_rsk && load_predictor->isEnabled() && lp_prediction == true && actual_l1d_hit == false) {
+          sim_stats.pred_l1d_hit_actual_l1d_miss_reschedule++;
+          shall_reschedule = true; // Reschedule penalty
+          if (enable_rsk_dbg) {
+            fmt::print("[RESCHEDULE] Scenario 3: Pred L1D H, Act L1D M (FP). Instr_id: {}. Actual depth: {}\n", lq_entry->instr_id,
+                       (actual_l2c_hit ? "L2C" : (actual_llc_hit ? "LLC" : "DRAM")));
+          }
+        }
+        // Scenario 4: Predict L1D miss - is L1D miss AND L2C hit (True Negative for L1D prediction)
+        else if (enable_rsk && load_predictor->isEnabled() && lp_prediction == false && actual_l1d_hit == false && actual_l2c_hit == true) {
+          sim_stats.pred_l1d_miss_actual_l2c_hit++;
+          shall_reschedule = false; // No penalty. ChampSim-like behavior, accounted for.
+          if (enable_rsk_dbg) {
+            fmt::print("[NO_RESCHEDULE] Scenario 4: Pred L1D M, Act L1D M & L2C H. Instr_id: {}\n", lq_entry->instr_id);
+          }
+        }
+        // Scenario 5: Predict L1D miss - is L1D miss AND L2C miss (Deeper Miss than implied by L1D miss prediction)
+        // This covers LLC or DRAM hits
+        else if (enable_rsk && load_predictor->isEnabled() && lp_prediction == false && actual_l1d_hit == false && actual_l2c_hit == false) {
+          sim_stats.pred_l1d_miss_actual_l2c_miss_reschedule++;
+          shall_reschedule = true; // Reschedule penalty. Deeper miss than implied by "miss L1D".
+          if (enable_rsk_dbg) {
+            fmt::print("[RESCHEDULE] Scenario 5: Pred L1D M, Act L1D M & L2C M. Instr_id: {}. Actual depth: {}\n", lq_entry->instr_id,
+                       (actual_llc_hit ? "LLC" : "DRAM"));
+          }
+        }
+        // Scenario 6: Predict L1D miss - is L1D hit (False Negative for L1D)
+        else if (enable_rsk && load_predictor->isEnabled() && lp_prediction == false && actual_l1d_hit == true) {
+          sim_stats.pred_l1d_miss_actual_l1d_hit_reschedule++;
+          shall_reschedule = true; // Reschedule penalty. Wasted stall/delay, missed opportunity.
+          if (enable_rsk_dbg) {
+            fmt::print("[RESCHEDULE] Scenario 6: Pred L1D M, Act L1D H (FN). Instr_id: {}\n", lq_entry->instr_id);
+          }
+        }
+
+        // --- Execute Rescheduling if determined to be necessary ---
+        if (shall_reschedule) {
+          sim_stats.rescheduled_events++;
+          sim_stats.total_rob_occupancy_at_reschedule += std::size(ROB);
+
+          bool start_reschedule = false;
+          uint64_t current_rescheduled_count = 0;
+          for (auto& rob_instr : ROB) {
+            bool should_reschedule_this_instr = false;
+            if (!enable_rsk_branch) {
+              if (rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED) {
+                should_reschedule_this_instr = true;
+              }
+            } else {
+              // Ensure start_reschedule is properly maintained across iterations if used
+              if ((rob_instr.is_branch || start_reschedule) && rob_instr.instr_id > lq_entry->instr_id && rob_instr.executed != COMPLETED) {
+                start_reschedule = true;
+                should_reschedule_this_instr = true;
+              }
+            }
+
+            if (should_reschedule_this_instr) {
+              rob_instr.rescheduled = INFLIGHT;
+              rob_instr.scheduled = 0;
+              rob_instr.executed = 0;
+              rob_instr.event_cycle = current_cycle;
+              current_rescheduled_count++;
+
+              if (enable_rsk_dbg) {
+                fmt::print("{} instr_id: {} is going to be rescheduled, current_cycle: {}\n", __func__, rob_instr.instr_id, current_cycle);
+              }
             }
           }
-          sim_stats.load_misses++;
+          sim_stats.max_instructions_rescheduled = std::max(sim_stats.max_instructions_rescheduled, current_rescheduled_count);
         }
+        // --- End rescheduling logic ---
+
+        // Finally, reset the LQ entry after all processing for it is done
+        lq_entry.reset();
       }
     }
 
-    if (!closed) {
+    if (!closed_current_request) {
       fmt::print("[LSQ] {} Request arrived and didn't close LSQ, address: {} vaddress: {} cycle: {}\n", __func__, l1d_it->address, l1d_it->v_address,
                  current_cycle);
       print_deadlock();
+      abort();
     }
 
     ++progress;
@@ -861,17 +931,10 @@ long O3_CPU::retire_rob()
       sim_stats.retired_load++;
 
       // Track unique loads
-      if (unique_loads.insert(rob_it->instr_id).second) {
-        sim_stats.unique_loads++;
-      }
-
-      // Track unique load addresses
-      for (auto addr : rob_it->source_memory) {
-        if (unique_loads_addresses.insert(addr).second) {
-          sim_stats.unique_load_addresses++;
-        } else {
-          sim_stats.repeated_load_addresses++;
-        }
+      if (unique_loads_retired.insert(rob_it->ip).second) {
+        sim_stats.unique_loads_retired++;
+      } else {
+        sim_stats.repeated_loads_retired++;
       }
     } else if (rob_it->is_store) {
       sim_stats.retired_store++;

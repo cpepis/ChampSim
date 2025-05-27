@@ -1,22 +1,65 @@
 #include "bloom_filter.h"
 
+#include <algorithm>
+
 #include "champsim.h"
 #include <fmt/core.h>
 
-BloomFilter::BloomFilter(size_t size, size_t maxEntries) : filter(size, false), filterSize(size), entriesSeen(0), maxEntries(maxEntries)
+BloomFilter::BloomFilter(LoadPredictorStats& s_lp, size_t _size, size_t _maxEntries)
+    : LoadPredictor(s_lp), filter(_size, false), filterSize(_size), maxEntries(_maxEntries), entriesSeen(0)
 {
+  setEnabled(true);
   fmt::print("Bloom filter size: {} max entries: {}\n", filterSize, maxEntries);
 }
 
-void BloomFilter::setEnabled(bool enabled) { enable = enabled; }
+void BloomFilter::update(Addr pc, Addr addr, bool actual_was_hit, bool predicted_was_hit)
+{
+  // Check if the predictor is enabled using the base class method
+  if (!isEnabled()) {
+    return; // No update if the predictor is disabled
+  }
 
-bool BloomFilter::isEnabled() const { return enable; }
+  lp_stats.record_outcome(actual_was_hit, predicted_was_hit);
+
+  // Insert the address into the Bloom filter
+  insert(addr);
+
+  if constexpr (champsim::debug_print) {
+    fmt::print("[BLOOM] {}: Updating for address: 0x{:x} (PC: 0x{:x}) - Actual Hit: {}, Predicted Hit: {}\n", __func__, addr, pc,
+               actual_was_hit ? "HIT" : "MISS", predicted_was_hit ? "HIT" : "MISS");
+  }
+}
+
+bool BloomFilter::predict(Addr pc, Addr addr)
+{
+  // Check if the predictor is enabled using the base class method
+  if (!isEnabled()) {
+    return false; // No prediction if the predictor is disabled
+  }
+
+  bool is_present = lookup(addr);
+
+  if constexpr (champsim::debug_print) {
+    fmt::print("[BLOOM] {}: Predicting for address: 0x{:x} (PC: 0x{:x}) - Predicted as: {}\n", __func__, addr, pc, is_present ? "PRESENT" : "NOT PRESENT");
+  }
+
+  lp_stats.record_prediction(is_present);
+
+  // Return the prediction
+  return is_present;
+}
+
+void BloomFilter::reset()
+{
+  std::fill(filter.begin(), filter.end(), false);
+  entriesSeen = 0;
+  if constexpr (champsim::debug_print) {
+    fmt::print("[BLOOM] {}: Resetting bloom filter\n", __func__);
+  }
+}
 
 bool BloomFilter::lookup(Addr instPC) const
 {
-  if (!isEnabled())
-    return false;
-
   uint64_t h1 = hash1(instPC) % filterSize;
   uint64_t h2 = hash2(instPC) % filterSize;
   uint64_t h3 = hash3(instPC) % filterSize;
@@ -27,7 +70,7 @@ bool BloomFilter::lookup(Addr instPC) const
 
 void BloomFilter::insert(Addr instPC)
 {
-  if (!isEnabled() || lookup(instPC))
+  if (lookup(instPC)) // Check enabled and if already present
     return;
 
   uint64_t h1 = hash1(instPC) % filterSize;
@@ -43,15 +86,6 @@ void BloomFilter::insert(Addr instPC)
   entriesSeen++;
   if (entriesSeen > maxEntries)
     reset();
-}
-
-void BloomFilter::reset()
-{
-  std::fill(filter.begin(), filter.end(), false);
-  entriesSeen = 0;
-  if constexpr (champsim::debug_print) {
-    fmt::print("[BLOOM] {}: Resetting bloom filter\n", __func__);
-  }
 }
 
 uint64_t BloomFilter::hash1(uint64_t key) const
