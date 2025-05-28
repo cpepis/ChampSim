@@ -550,14 +550,14 @@ long O3_CPU::operate_lsq()
         if (lq_entry_check.has_value() && lq_entry_check->fetch_issued
             && ((lq_entry_check->virtual_address >> LOG2_BLOCK_SIZE) == (lq_entry->virtual_address >> LOG2_BLOCK_SIZE))) {
           lq_entry->fetch_issued = true;
-          lq_entry->fetch_issued_cycle = lq_entry_check->fetch_issued_cycle;
+          lq_entry->fetch_issued_cycle = current_cycle;
 
           lq_entry->merged = true;
           sim_stats.merged_loads++;
 
           if (enable_rsk_dbg) {
-            fmt::print("{} instr_id: {} vaddr: {:#x} merged with: {} vaddr: {:#x} fetch_issued_cycle: {}\n", __func__, lq_entry->instr_id,
-                       lq_entry->virtual_address, lq_entry_check->instr_id, lq_entry_check->virtual_address, lq_entry_check->fetch_issued_cycle);
+            fmt::print("{} instr_id: {} vaddr: {:#x} merged with: {} vaddr: {:#x} fetch_issued_cycle: {} event_cycle: {} current_cycle: {}\n", __func__, lq_entry->instr_id,
+                       lq_entry->virtual_address, lq_entry_check->instr_id, lq_entry_check->virtual_address, lq_entry_check->fetch_issued_cycle, lq_entry->event_cycle, current_cycle);
           }
 
           break;
@@ -572,8 +572,10 @@ long O3_CPU::operate_lsq()
           lq_entry->fetch_issued_cycle = current_cycle;
           lq_entry->load_predictor_result = load_predictor->predict(lq_entry->ip, lq_entry->virtual_address);
           sim_stats.detected_load_misses += (!lq_entry->load_predictor_result) ? 1 : 0;
+
           if (enable_rsk_dbg) {
-            fmt::print("{} instr_id: {} vaddr: {:#x} fetch_issued at cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address, current_cycle);
+            fmt::print("{} instr_id: {} vaddr: {:#x} fetch_issued at cycle: {} event_cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address, current_cycle, 
+                       lq_entry->event_cycle);
           }
         }
       }
@@ -705,28 +707,16 @@ long O3_CPU::handle_memory_return()
         ++progress;
         closed_current_request = true; // This request found its matching LQ entry
 
-        if (enable_rsk_dbg) {
-          fmt::print("{} instr_id: {} vaddr: {:#x} finished at cycle: {} event_cycle: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address,
-                     current_cycle, lq_entry->event_cycle);
-        }
-
-        if (lq_entry->merged) {
-          // If this load was merged, we do not need to process it further
-          lq_entry.reset();
-          continue;
-        }
-
-        // Get the original prediction result
-        bool lp_prediction = lq_entry->load_predictor_result;
-
         // Determine the actual hit level based on return time
         bool actual_l1d_hit = (current_cycle <= lq_entry->fetch_issued_cycle + L1D_LATENCY);
         bool actual_l2c_hit = (!actual_l1d_hit && (current_cycle <= lq_entry->fetch_issued_cycle + L2C_LATENCY));
         bool actual_llc_hit = (!actual_l1d_hit && !actual_l2c_hit && (current_cycle <= lq_entry->fetch_issued_cycle + LLC_LATENCY));
         bool actual_dram_hit = (!actual_l1d_hit && !actual_l2c_hit && !actual_llc_hit);
 
-        // Update the load predictor's internal state and its general statistics
-        load_predictor->update(lq_entry->ip, lq_entry->virtual_address, actual_l1d_hit, lp_prediction);
+        if (enable_rsk_dbg) {
+          fmt::print("{} instr_id: {} vaddr: {:#x} finished at cycle: {} fetch_cycle: {} event_cycle: {} merged: {} lid_hit: {}\n", __func__, lq_entry->instr_id, lq_entry->virtual_address,
+                     current_cycle, lq_entry->fetch_issued_cycle, lq_entry->event_cycle, lq_entry->merged ? "yes" : "no", actual_l1d_hit ? "yes" : "no");
+        }
 
         // Update overall CPU stats for actual load hits/misses
         if (actual_l1d_hit) { // This load hit in L1D
@@ -797,7 +787,19 @@ long O3_CPU::handle_memory_return()
           }
         }
 
-        // --- Determine if Rescheduling is Needed ---
+        if (lq_entry->merged) {
+          // If this load was merged, we do not need to process it further
+          lq_entry.reset();
+          continue;
+        }
+
+        // Get the original prediction result
+        bool lp_prediction = lq_entry->load_predictor_result;
+
+        // Update the load predictor's internal state and its general statistics
+        load_predictor->update(lq_entry->ip, lq_entry->virtual_address, actual_l1d_hit, lp_prediction);
+
+        // Determine if Rescheduling is Needed
         bool shall_reschedule = false;
 
         // Scenario 1: Aggressive timeout for loads when predictor is DISABLED

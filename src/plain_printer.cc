@@ -114,27 +114,17 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
   fmt::print(stream, "Average ROB Occupancy at rescheduled: {:.4g}\n", std::ceil(stats.total_rob_occupancy_at_reschedule) / stats.rescheduled_events);
   fmt::print("Maximum Instructions Rescheduled in a Single Event: {}\n", stats.max_instructions_rescheduled);
 
-  // --- Calculate Total Predictions (and Correct/Incorrect) from Confusion Matrix ---
-  uint64_t total_predictions_from_confusion_matrix = stats.load_predictor_stats.true_positives + stats.load_predictor_stats.false_positives
-                                                     + stats.load_predictor_stats.true_negatives + stats.load_predictor_stats.false_negatives;
-
-  uint64_t correct_predictions_derived = stats.load_predictor_stats.true_positives + stats.load_predictor_stats.true_negatives;
-
-  uint64_t incorrect_predictions_derived = stats.load_predictor_stats.false_positives + stats.load_predictor_stats.false_negatives;
-  // -------------------------------------------------------------------------------
-
   fmt::print("\n--- Load Predictor Statistics ---\n");
-  fmt::print("Total Predictions (from Confusion Matrix): {}\n", total_predictions_from_confusion_matrix);
-  // fmt::print("Predicted Hits (Aggressive): {}\n", stats.load_predictor_stats.predicted_hits);
-  // fmt::print("Predicted Misses (Non-Aggressive): {}\n", stats.load_predictor_stats.predicted_misses);
+  fmt::print("Total Predictions: {}\n", stats.load_predictor_stats.total_predictions);
 
-  fmt::print("Correct Predictions: {}\n", correct_predictions_derived);
-  fmt::print("Incorrect Predictions: {}\n", incorrect_predictions_derived);
+  fmt::print("Predicted Hits (Aggressive): {}\n", stats.load_predictor_stats.predicted_hits);
+  fmt::print("Predicted Misses (Non-Aggressive): {}\n", stats.load_predictor_stats.predicted_misses);
 
-  if (stats.load_predictor_stats.total_predictions > 0) {
-    double accuracy = static_cast<double>(correct_predictions_derived) / total_predictions_from_confusion_matrix * 100.0;
-    fmt::print("Overall Prediction Accuracy: {:.2f}%\n", accuracy);
-  }
+  fmt::print("Correct Predictions: {}\n", stats.load_predictor_stats.correct_predictions);
+  fmt::print("Incorrect Predictions: {}\n", stats.load_predictor_stats.incorrect_predictions);
+
+  fmt::print("Overall Prediction Accuracy: {:.2f}%\n",
+             static_cast<double>(stats.load_predictor_stats.correct_predictions) / stats.load_predictor_stats.total_predictions * 100.0);
 
   fmt::print("Confusion Matrix:\n");
   fmt::print("True Positives (Pred H, Act H): {}\n", stats.load_predictor_stats.true_positives);
