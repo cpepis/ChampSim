@@ -5,11 +5,12 @@
 
 // Constructor: Initializes the base class and the PHT
 PCAddressPredictor::PCAddressPredictor(LoadPredictorStats& s_lp)
-    : LoadPredictor(s_lp), pht(PC_ADDR_PHT_ENTRIES, 2) // Initialize all 2-bit counters to 'weakly taken' (binary 10)
+    : LoadPredictor(s_lp), pht(PC_ADDR_PHT_ENTRIES, 2), // Initialize all 2-bit counters to 'weakly taken' (binary 10)
+      load_history_register(0) // Initialize the load history register to 0
 {
   // Enable the predictor upon construction
   setEnabled(true);
-  fmt::print("PCAddressPredictor initialized with {} entries (2-bit counters).\n", PC_ADDR_PHT_ENTRIES);
+  fmt::print("PCAddressPredictor initialized with {} entries (2-bit counters) and {}-bit LHR.\n", PC_ADDR_PHT_ENTRIES, LHR_BITS);
 }
 
 // Helper function to generate a PHT index
@@ -22,7 +23,10 @@ uint64_t PCAddressPredictor::get_index(Addr pc, Addr virtual_address) const
   // Then XORed with PC. The result is then masked/modded by table size.
   uint64_t combined_hash = (pc ^ (virtual_address >> 6)); // Assuming 64-byte blocks for 6-bit shift
 
-  return combined_hash % PC_ADDR_PHT_ENTRIES;
+  // XOR the combined hash with the Global Load History Register
+  uint64_t final_hash = combined_hash ^ load_history_register;
+
+  return final_hash % PC_ADDR_PHT_ENTRIES;
 }
 
 void PCAddressPredictor::update(Addr pc, Addr addr, bool actual_was_hit, bool predicted_was_hit)
@@ -47,6 +51,13 @@ void PCAddressPredictor::update(Addr pc, Addr addr, bool actual_was_hit, bool pr
       pht[index]--;
     }
   }
+
+  // Update the Global Load History Register (LHR)
+  // Shift left by 1 and add the new outcome (1 for hit, 0 for miss)
+  load_history_register <<= 1;
+  load_history_register |= (actual_was_hit ? 1 : 0);
+  // Mask to keep only the last LHR_BITS bits
+  load_history_register &= ((1ULL << LHR_BITS) - 1);
 
   if constexpr (champsim::debug_print) {
     fmt::print("[PCAddr_LP] {}: Updated PC 0x{:x}, Addr 0x{:x}, Actual: {}. Predicted: {}. New Counter: {}\n", __func__, pc, addr, actual_was_hit,

@@ -89,7 +89,6 @@ def parse_champsim_output(path):
                 benchmark_name = benchmark_name.split(".champsimtrace.xz")[
                     0
                 ]  # Remove suffix
-                benchmark_name = benchmark_name.rsplit("-", 1)[0]
                 df["Benchmark"] = benchmark_name  # Add benchmark column
                 all_data.append(df)
         # Concatenate all data into a single DataFrame and set Benchmark as index

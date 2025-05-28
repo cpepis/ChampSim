@@ -24,6 +24,10 @@ private:
   // Each entry represents a prediction for a (PC, Address) pair
   std::vector<uint8_t> pht;
 
+  // Global Load History Register (LHR)
+  uint64_t load_history_register; // Stores recent hit/miss outcomes
+  const unsigned LHR_BITS = 12;   // Number of bits in LHR
+
   // Helper function to generate an index into the PHT from PC and virtual_address
   uint64_t get_index(Addr pc, Addr virtual_address) const;
 };
