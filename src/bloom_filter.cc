@@ -21,8 +21,9 @@ void BloomFilter::update(Addr pc, Addr addr, bool actual_was_hit, bool predicted
 
   lp_stats.record_outcome(actual_was_hit, predicted_was_hit);
 
-  // Insert the address into the Bloom filter
-  insert(addr);
+  // Insert the address into the Bloom filter if it was a hit
+  if (actual_was_hit) 
+    insert(addr);
 
   if constexpr (champsim::debug_print) {
     fmt::print("[BLOOM] {}: Updating for address: 0x{:x} (PC: 0x{:x}) - Actual Hit: {}, Predicted Hit: {}\n", __func__, addr, pc,
