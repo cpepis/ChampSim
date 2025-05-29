@@ -13,8 +13,8 @@ using namespace std;
 #endif
 
 // ungodly hack
-#define LLC_WAY 16
-#define LLC_SET 2048
+#define LLC_WAY 12
+#define LLC_SET 4096
 
 constexpr int LOG2_LLC_SET = log2(LLC_SET);
 constexpr int LOG2_LLC_SIZE = LOG2_LLC_SET + log2(LLC_WAY) + LOG2_BLOCK_SIZE;
