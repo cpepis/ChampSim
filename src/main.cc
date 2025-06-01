@@ -83,7 +83,7 @@ int main(int argc, char** argv)
   app.add_flag("--rsk-dbg", set_rsk_dbg_callback, "Enable rescheduling debug output");
 
   std::string load_predictor;
-  app.add_option("--load-predictor", load_predictor, "Select load predictor (local, gshare, gskew, hybrid, globalcounter, pif, pap, bloomfilter)");
+  app.add_option("--load-predictor", load_predictor, "Select load predictor (local, gshare, gskew, hybrid, globalcounter, pif, pap, bloomfilter, perceptron)");
   app.callback([&] {
     for (O3_CPU& cpu : gen_environment.cpu_view()) {
       cpu.load_predictor = create_predictor(load_predictor, cpu.sim_stats.load_predictor_stats);

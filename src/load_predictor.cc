@@ -9,6 +9,7 @@
 #include "gskew_predictor.h"
 #include "hybrid_predictor.h"
 #include "local_predictor.h"
+#include "lp_perceptron.h"
 #include "noop_predictor.h"
 #include "ooo_cpu.h"
 #include "pc_address_predictor.h"
@@ -36,6 +37,8 @@ LoadPredictor* create_predictor(const std::string& name, LoadPredictorStats& lp_
     return new LocalPredictor(lp_stats);
   else if (name == "pap")
     return new PCAddressPredictor(lp_stats);
+  else if (name == "perceptron")
+    return new PerceptronPredictor(lp_stats);
   else if (name == "pif") {
     static GlobalCounterPredictor* global_ctr_singleton = nullptr;
 
