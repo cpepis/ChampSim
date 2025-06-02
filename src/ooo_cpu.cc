@@ -850,7 +850,7 @@ long O3_CPU::handle_memory_return()
         // Scenario 6: Predict L1D miss - is L1D hit (False Negative for L1D)
         else if (enable_rsk && load_predictor->isEnabled() && lp_prediction == false && actual_l1d_hit == true) {
           sim_stats.pred_l1d_miss_actual_l1d_hit_reschedule++;
-          shall_reschedule = true; // Reschedule penalty. Wasted stall/delay, missed opportunity.
+          shall_reschedule = false; // No penalty. ChampSim-like behavior, accounted for.
           if (enable_rsk_dbg) {
             fmt::print("[RESCHEDULE] Scenario 6: Pred L1D M, Act L1D H (FN). Instr_id: {}\n", lq_entry->instr_id);
           }
