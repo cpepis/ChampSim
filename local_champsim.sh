@@ -65,10 +65,10 @@ fi
 rm -rf bin
 make -j$(nproc)
 
-mkdir -p temp/bsl # baseline
-mkdir -p temp/rsk # rescheduling
-mkdir -p temp/rsk-branch # rescheduling only after a branch
-mkdir -p temp/rsk-predictor # rescheduling with predictor
+mkdir -p temp/bsl                  # baseline
+mkdir -p temp/rsk                  # rescheduling
+mkdir -p temp/rsk-branch           # rescheduling only after a branch
+mkdir -p temp/rsk-predictor        # rescheduling with predictor
 mkdir -p temp/rsk-branch-predictor # rescheduling with predictor only after a branch
 
 echo "Running Champsim with the following parameters:"
@@ -80,6 +80,14 @@ echo "Output file: $output_file"
 # Construct the command to run Champsim
 bin/champsim --warmup-instructions $w --simulation-instructions $s ${trace_file} >temp/bsl/${trace_name}.log &
 bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk ${trace_file} >temp/rsk/${trace_name}.log &
-bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --rsk-branch ${trace_file} >temp/rsk-branch/${trace_name}.log &
-bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --rsk-predictor ${trace_file} >temp/rsk-predictor/${trace_name}.log &
-bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --rsk-branch --rsk-predictor ${trace_file} >temp/rsk-branch-predictor/${trace_name}.log &
+# bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --rsk-branch ${trace_file} >temp/rsk-branch/${trace_name}.log &
+bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --load-predictor=perceptron ${trace_file} >temp/rsk-predictor/${trace_name}-perceptron.log &
+# bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --load-predictor=local ${trace_file} >temp/rsk-predictor/${trace_name}-local.log &
+# bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --load-predictor=gshare ${trace_file} >temp/rsk-predictor/${trace_name}-gshare.log &
+# bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --load-predictor=gskew ${trace_file} >temp/rsk-predictor/${trace_name}-gskew.log &
+# bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --load-predictor=hybrid ${trace_file} >temp/rsk-predictor/${trace_name}-hybrid.log &
+# bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --load-predictor=globalcounter ${trace_file} >temp/rsk-predictor/${trace_name}-globalcounter.log &
+# bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --load-predictor=pif ${trace_file} >temp/rsk-predictor/${trace_name}-pif.log &
+# bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --load-predictor=pap ${trace_file} >temp/rsk-predictor/${trace_name}-pap.log &
+# bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --load-predictor=bloomfilter ${trace_file} >temp/rsk-predictor/${trace_name}-bloomfilter.log &
+# bin/champsim --warmup-instructions $w --simulation-instructions $s --rsk --rsk-branch --load-predictor ${trace_file} >temp/rsk-branch-predictor/${trace_name}.log &

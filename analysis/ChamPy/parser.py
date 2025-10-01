@@ -2,6 +2,8 @@ import os
 import re
 import pandas as pd
 
+from datetime import timedelta
+
 
 def merge_simpoints(df):
     def load_weights(filepath):
@@ -66,14 +68,24 @@ def merge_simpoints(df):
 
     # Label suite
     temp_df["Suite"] = temp_df.index.map(
-        lambda x: 2006 if x.split(".")[0].startswith("4") else 2017
+        lambda x: (
+            "xs"
+            if x[0] == "x"
+            else (
+                "gap"
+                if x[0].isalpha()
+                else ("2006" if x.split(".")[0].startswith("4") else "2017")
+            )
+        )
     )
 
-    # Split into two DataFrames
-    spec2006_df = temp_df[temp_df["Suite"] == 2006].drop(columns=["Suite"])
-    spec2017_df = temp_df[temp_df["Suite"] == 2017].drop(columns=["Suite"])
+    # Split into DataFrames
+    xs = temp_df[temp_df["Suite"] == "xs"].drop(columns=["Suite"])
+    gap = temp_df[temp_df["Suite"] == "gap"].drop(columns=["Suite"])
+    spec2006_df = temp_df[temp_df["Suite"] == "2006"].drop(columns=["Suite"])
+    spec2017_df = temp_df[temp_df["Suite"] == "2017"].drop(columns=["Suite"])
 
-    return spec2006_df, spec2017_df
+    return xs, gap, spec2006_df, spec2017_df
 
 
 def parse_champsim_output(path):
@@ -81,6 +93,20 @@ def parse_champsim_output(path):
     if os.path.isdir(path):
         all_data = []
         for filename in os.listdir(path):
+
+            if (
+                filename.startswith("pr.kron")
+                or filename.startswith("pr.twitter")
+                or filename.startswith("pr.urand")
+            ):
+                continue
+
+            if filename.startswith("sssp.twitter") or filename.startswith("sssp.urand"):
+                continue
+
+            if filename.startswith("tc.twitter"):
+                continue
+
             filepath = os.path.join(path, filename)
             if os.path.isfile(filepath):
                 # Parse each file and add the benchmark name to each row
@@ -114,12 +140,23 @@ def parse_single_file(file_path):
     patterns = define_cpu_patterns()
     cache_patterns = define_cache_patterns()
 
-    # Read the file and start parsing after "Region of Interest Statistics"
+    # Read the file and start parsing
     with open(file_path, "r") as file:
         lines = file.readlines()
 
     roi_start = False
     for line in lines:
+        if "Simulation complete" in line:
+            match = re.search(
+                r"Simulation time: (\d{2}) hr (\d{2}) min (\d{2}) sec", line
+            )
+            if match:
+                hours, minutes, seconds = map(int, match.groups())
+                sim_time = timedelta(hours=hours, minutes=minutes, seconds=seconds)
+                data["Simulation Time"] = (
+                    sim_time.total_seconds()
+                )  # Store as total seconds
+                continue
         if "Region of Interest Statistics" in line:
             roi_start = True
             continue
@@ -135,6 +172,11 @@ def parse_single_file(file_path):
         parse_cache_patterns(line, cache_patterns, data)
 
     # Convert the data dictionary to a DataFrame
+    if not data:
+        raise ValueError(
+            f"No data found in the file: {file_path}. File has been deleted."
+        )
+
     df = pd.DataFrame([data])
     return df
 
