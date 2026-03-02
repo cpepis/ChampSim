@@ -168,7 +168,7 @@ void champsim::plain_printer::print(CACHE::stats_type stats)
                stats.pf_useful, stats.pf_useless);
     fmt::print(stream, "{} WRONG-PATH ACCESS: {:10} LOAD: {:10} USEFULL: {:10} FILL: {:10} USELESS: {:10}\n", stats.name, stats.wp_load + stats.wp_store,
                stats.wp_load, stats.wp_useful, stats.wp_fill, stats.wp_useless);
-    fmt::print(stream, "{} POLLUTION: {:.4g} WP_FILL: {:10} WP_MISS: {:10} CP_FILL: {:10} CP_MISS: {:10}\n", stats.name, stats.avg_pollution, stats.wp_fill,
+    fmt::print(stream, "{} POLLUTION: {:.4g} SAMPLES: {:10} WP_FILL: {:10} WP_MISS: {:10} CP_FILL: {:10} CP_MISS: {:10}\n", stats.name, stats.avg_pollution, stats.pollution_samples, stats.wp_fill,
                stats.wp_miss, stats.cp_fill, stats.cp_miss);
     fmt::print(stream, "{} INSTR REQ: {}  HIT: {}  MISS: {} WP_REQ: {} WP_HIT: {} WP_MISS: {} \n", stats.name, stats.instr_req, stats.istr_hit, stats.istr_miss,
                stats.wp_instr_req, stats.wp_istr_hit, stats.wp_istr_miss);

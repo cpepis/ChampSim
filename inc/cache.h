@@ -62,6 +62,7 @@ struct cache_stats {
   uint64_t rp_count = 0;
   uint64_t num_fill = 0;
   float avg_pollution = 0;
+  uint64_t pollution_samples = 0;
 
   // cache stats
   uint64_t istr_hit = 0;

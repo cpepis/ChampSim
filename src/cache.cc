@@ -1040,7 +1040,8 @@ void CACHE::end_phase(unsigned finished_cpu)
   roi_stats.avg_cp_data_miss_latency = std::ceil(roi_stats.total_cp_data_miss_latency) / std::ceil(roi_stats.data_miss-roi_stats.wp_data_miss);
 
   if (polluation.size()) {
-    roi_stats.avg_pollution = (float_t)std::accumulate(polluation.begin(), polluation.end(), 0) / polluation.size();
+    roi_stats.avg_pollution = std::accumulate(polluation.begin(), polluation.end(), 0.0) / polluation.size();
+    roi_stats.pollution_samples = polluation.size();
   }
 
   for (auto ul : upper_levels) {
