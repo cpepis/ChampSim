@@ -39,7 +39,7 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
              stats.instrs(), stats.cycles(), stats.wp_cycles);
   fmt::print(stream, "\n{} wrong_path_insts: {} wrong_path_insts_skipped: {} wrong_path_insts_executed: {}", stats.name, stats.wrong_path_insts,
              stats.wrong_path_skipped, stats.wrong_path_insts_executed);
-  fmt::print(stream, "\n{} instr_foot_print: {} data_foot_print: {}", stats.name, stats.instr_foot_print.size(), stats.data_foot_print.size());
+  fmt::print(stream, "\n{} instr_foot_print: {} data_foot_print: {} data_addr_foot_print: {}", stats.name, stats.instr_foot_print.size(), stats.data_foot_print.size(), stats.data_addr_foot_print.size());
   fmt::print(stream, "\n{} is_prefetch_insts: {} is_prefetch_skipped: {}", stats.name, stats.is_prefetch_insts, stats.is_prefetch_skipped);
   fmt::print(stream, "\n{} Branch Prediction Accuracy: {:.4g}% MPKI: {:.4g} Average ROB Occupancy at Mispredict: {:.4g}\n", stats.name,
              (100.0 * std::ceil(total_branch - total_mispredictions)) / total_branch, (1000.0 * total_mispredictions) / std::ceil(stats.instrs()),

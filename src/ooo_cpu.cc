@@ -996,6 +996,7 @@ long O3_CPU::operate_lsq()
         --load_bw;
         lq_entry->fetch_issued = true;
         sim_stats.data_foot_print.insert(lq_entry->ip >> LOG2_BLOCK_SIZE);
+        sim_stats.data_addr_foot_print.insert(lq_entry->virtual_address >> LOG2_BLOCK_SIZE);
 
         if (lq_entry->is_wrong_path) {
           sim_stats.wrong_path_loads_executed++;
@@ -1047,6 +1048,7 @@ bool O3_CPU::do_complete_store(const LSQ_ENTRY& sq_entry)
   bool success = L1D_bus.issue_write(data_packet);
   if (success) {
     sim_stats.data_foot_print.insert(data_packet.ip >> LOG2_BLOCK_SIZE);
+    sim_stats.data_addr_foot_print.insert(data_packet.v_address >> LOG2_BLOCK_SIZE);
   }
   return success;
 }

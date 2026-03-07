@@ -160,7 +160,8 @@ struct cpu_stats {
   std::array<long long, 8> branch_type_misses = {};
 
   std::set<uint64_t> instr_foot_print;
-  std::set<uint64_t> data_foot_print; 
+  std::set<uint64_t> data_foot_print;
+  std::set<uint64_t> data_addr_foot_print;
   
   exe_stats exe_stats_new;
   uint64_t last_cycle_last_rob_ip = 0;
