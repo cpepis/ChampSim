@@ -40,6 +40,7 @@
 #include "instruction.h"
 #include "module_impl.h"
 #include "operable.h"
+#include "register_allocator.h"
 #include "util/lru_table.h"
 #include <type_traits>
 
@@ -253,28 +254,27 @@ public:
   std::vector<std::optional<LSQ_ENTRY>> LQ;
   std::deque<LSQ_ENTRY> SQ;
 
-  // std::array<std::vector<std::reference_wrapper<ooo_model_instr>>, std::numeric_limits<uint8_t>::max() + 1> reg_producers;
-  std::array<std::vector<ooo_model_instr*>, std::numeric_limits<uint8_t>::max() + 1> reg_producers;
-
   struct saved_instr {
     uint64_t ip = 0;
     uint64_t instr_id = 0;
     std::vector<uint64_t> source_memory = {};
-    std::vector<uint8_t> source_registers = {};
+    std::vector<PHYSICAL_REGISTER_ID> source_registers = {};
     std::vector<uint64_t> destination_memory = {};
-    std::vector<uint8_t> destination_registers = {};
+    std::vector<PHYSICAL_REGISTER_ID> destination_registers = {};
   };
 
   std::map<uint64_t, uint64_t> imap_counter;
   std::map<uint64_t, std::vector<saved_instr>> instruction_map;
 
   // Constants
-  std::size_t IFETCH_BUFFER_SIZE, DECODE_BUFFER_SIZE, DISPATCH_BUFFER_SIZE, ROB_SIZE, LQ_SIZE, SQ_SIZE;
+  std::size_t IFETCH_BUFFER_SIZE, DECODE_BUFFER_SIZE, DISPATCH_BUFFER_SIZE, REGISTER_FILE_SIZE, ROB_SIZE, LQ_SIZE, SQ_SIZE;
   long int FETCH_WIDTH, DECODE_WIDTH, DISPATCH_WIDTH, EXEC_WIDTH;
   long int LQ_WIDTH, SQ_WIDTH;
   long int RETIRE_WIDTH;
   unsigned BRANCH_MISPREDICT_PENALTY, SCHEDULER_SIZE, DECODE_LATENCY, DISPATCH_LATENCY, SCHEDULING_LATENCY, EXEC_LATENCY;
   long int L1I_BANDWIDTH, L1D_BANDWIDTH;
+
+  RegisterAllocator reg_allocator{REGISTER_FILE_SIZE};
 
   // branch
   uint64_t fetch_resume_cycle = 0;
@@ -388,6 +388,7 @@ public:
     std::size_t m_ifetch_buffer_size{};
     std::size_t m_decode_buffer_size{};
     std::size_t m_dispatch_buffer_size{};
+    std::size_t m_register_file_size{};
     std::size_t m_rob_size{};
     std::size_t m_lq_size{};
     std::size_t m_sq_size{};
@@ -416,7 +417,7 @@ public:
     template <unsigned long long OTHER_B, unsigned long long OTHER_T>
     Builder(builder_conversion_tag, const Builder<OTHER_B, OTHER_T>& other)
         : m_cpu(other.m_cpu), m_freq_scale(other.m_freq_scale), m_dib_set(other.m_dib_set), m_dib_way(other.m_dib_way), m_dib_window(other.m_dib_window),
-          m_ifetch_buffer_size(other.m_ifetch_buffer_size), m_decode_buffer_size(other.m_decode_buffer_size),
+          m_ifetch_buffer_size(other.m_ifetch_buffer_size), m_decode_buffer_size(other.m_decode_buffer_size), m_register_file_size(other.m_register_file_size),
           m_dispatch_buffer_size(other.m_dispatch_buffer_size), m_rob_size(other.m_rob_size), m_lq_size(other.m_lq_size), m_sq_size(other.m_sq_size),
           m_fetch_width(other.m_fetch_width), m_decode_width(other.m_decode_width), m_dispatch_width(other.m_dispatch_width),
           m_schedule_width(other.m_schedule_width), m_execute_width(other.m_execute_width), m_lq_width(other.m_lq_width), m_sq_width(other.m_sq_width),
@@ -467,6 +468,11 @@ public:
     self_type& dispatch_buffer_size(std::size_t dispatch_buffer_size_)
     {
       m_dispatch_buffer_size = dispatch_buffer_size_;
+      return *this;
+    }
+    self_type& register_file_size(std::size_t register_file_size_)
+    {
+      m_register_file_size = register_file_size_;
       return *this;
     }
     self_type& rob_size(std::size_t rob_size_)
@@ -590,7 +596,7 @@ public:
   template <unsigned long long B_FLAG, unsigned long long T_FLAG>
   explicit O3_CPU(Builder<B_FLAG, T_FLAG> b)
       : champsim::operable(b.m_freq_scale), cpu(b.m_cpu), DIB(b.m_dib_set, b.m_dib_way, {champsim::lg2(b.m_dib_window)}, {champsim::lg2(b.m_dib_window)}),
-        LQ(b.m_lq_size), IFETCH_BUFFER_SIZE(b.m_ifetch_buffer_size), DISPATCH_BUFFER_SIZE(b.m_dispatch_buffer_size), DECODE_BUFFER_SIZE(b.m_decode_buffer_size),
+        LQ(b.m_lq_size), IFETCH_BUFFER_SIZE(b.m_ifetch_buffer_size), DISPATCH_BUFFER_SIZE(b.m_dispatch_buffer_size), DECODE_BUFFER_SIZE(b.m_decode_buffer_size), REGISTER_FILE_SIZE(b.m_register_file_size),
         ROB_SIZE(b.m_rob_size), LQ_SIZE(b.m_lq_size), SQ_SIZE(b.m_sq_size), FETCH_WIDTH(b.m_fetch_width), DECODE_WIDTH(b.m_decode_width), DISPATCH_WIDTH(b.m_dispatch_width),
         SCHEDULER_SIZE(b.m_schedule_width), EXEC_WIDTH(b.m_execute_width), LQ_WIDTH(b.m_lq_width), SQ_WIDTH(b.m_sq_width), RETIRE_WIDTH(b.m_retire_width),
         BRANCH_MISPREDICT_PENALTY(b.m_mispredict_penalty), DISPATCH_LATENCY(b.m_dispatch_latency), DECODE_LATENCY(b.m_decode_latency),

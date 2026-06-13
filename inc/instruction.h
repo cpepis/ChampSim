@@ -40,6 +40,7 @@ enum branch_type {
   NOT_BRANCH
 };
 
+using PHYSICAL_REGISTER_ID = int16_t; // signed to use -1 to indicate no physical register
 enum flags { NON_SPEC = 0, SERIAL, SERIAL_AFTER, SERIAL_BEFORE, READ_BARRIER, WRITE_BARRIER, SQUASH_AFTER, SQUASHED };
 
 struct ooo_model_instr {
@@ -83,8 +84,8 @@ struct ooo_model_instr {
   unsigned completed_mem_ops = 0;
   int num_reg_dependent = 0;
 
-  std::vector<uint8_t> destination_registers = {}; // output registers
-  std::vector<uint8_t> source_registers = {};      // input registers
+  std::vector<PHYSICAL_REGISTER_ID> destination_registers = {}; // output registers
+  std::vector<PHYSICAL_REGISTER_ID> source_registers = {};      // input registers
 
   std::vector<uint64_t> destination_memory = {};
   std::vector<uint64_t> source_memory = {};

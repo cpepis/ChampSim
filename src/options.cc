@@ -52,6 +52,8 @@ void Options::update(environment& env)
       cpu.DISPATCH_BUFFER_SIZE = dispatch_buffer_size;
     if (rob_size)
       cpu.ROB_SIZE = rob_size;
+    if (register_file_size)
+      cpu.REGISTER_FILE_SIZE = register_file_size;
     if (lq_size)
       cpu.LQ_SIZE = lq_size;
     if (sq_size)
