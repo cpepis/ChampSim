@@ -732,6 +732,12 @@ long O3_CPU::schedule_instruction()
     if (reg_allocator.count_free_registers() < (sources_to_allocate + rob_it->destination_registers.size())) {
       break;
     }
+
+    if (!rob_it->is_wrong_path && reg_allocator.inWrongPath()) {
+      // We've hit the first non-WP instruction, restore the frontend register file
+      reg_allocator.restore_frontend_RAT();
+    }
+    
     if (rob_it->scheduled == 0) {
       do_scheduling(*rob_it);
       ++progress;
@@ -740,6 +746,11 @@ long O3_CPU::schedule_instruction()
 
     if (rob_it->executed == 0)
       --search_bw;
+
+    if (rob_it->before_wrong_path) {
+      // checkpoint the frontend register file for recovery later
+      reg_allocator.save_frontend_RAT();
+    }
   }
 
   if (progress == 0) {

@@ -25,7 +25,7 @@ private:
   std::queue<PHYSICAL_REGISTER_ID> free_registers;
   std::vector<PHYSICAL_REGISTER_ID> wp_issued_registers;
   std::vector<physical_register> physical_register_file;
-  bool inWrongPath = false;
+  bool in_wp = false;
 
 public:
   RegisterAllocator(size_t num_physical_registers);
@@ -40,6 +40,7 @@ public:
   int count_reg_dependencies(const ooo_model_instr& instr) const;
   void save_frontend_RAT();
   void restore_frontend_RAT();
+  bool inWrongPath() const;
   void print_deadlock();
 };
 #endif
