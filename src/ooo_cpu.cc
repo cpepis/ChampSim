@@ -1133,16 +1133,6 @@ void O3_CPU::do_complete_execution(ooo_model_instr& instr)
           fmt::print("FLUSH instr_id: {} is_wrong_path: {}\n", x.instr_id, x.is_wrong_path);
         }
         std::cout << std::flush;
-        // Remove dependences by wrong path instructions which
-        // are tracked by reg_producers
-        //  for (auto dreg : x.destination_registers) {
-        //    auto begin = std::begin(reg_producers.at(dreg));
-        //    auto end = std::end(reg_producers.at(dreg));
-        //    auto elem = std::find_if(begin, end, [wp_id = x.instr_id](ooo_model_instr* y) { return y->instr_id == wp_id; });
-        //    if (elem != end) {
-        //      reg_producers.at(dreg).erase(elem);
-        //    }
-        //  }
       } else {
 
         auto first_wp_inst = find_if(std::begin(x.registers_instrs_depend_on_me), std::end(x.registers_instrs_depend_on_me), [id = id](auto& y) {
