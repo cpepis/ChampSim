@@ -9,6 +9,9 @@ warnings.simplefilter("ignore", FutureWarning)
 
 from datetime import timedelta
 
+# mispredict_penalty from champsim_config.json
+RESTEER_PENALTY_CYCLES = 12
+
 weights = {
     "505.mcf_r_00": 0.073125,
     "505.mcf_r_01": 0.167787,
@@ -59,48 +62,257 @@ weights = {
 def merge_simpoints(df):
     def get_weight(name):
         simpoint = "_".join(name.split("_")[:3]).split("-")[0]
-        weight = weights.get(simpoint, 0)
-        # print(f"Processing: {name} -> Simpoint: {simpoint} -> Weight: {weight}")  # Debug print
-        return weight
+        return weights.get(simpoint, 0)
 
     def get_algorithm(name):
-        try:
-            # Assumes format like: 531.deepsjeng_r_03-champsim-l2c-scooby
-            parts = name.split("-")
-            algorithm = "-".join(parts[2:])  # Grab everything after 'champsim'
-        except IndexError:
-            algorithm = "unknown"
-        # print(f"[Algorithm] Processing: {name} -> Algorithm: {algorithm}")
-        return algorithm
+        return "-".join(name.split("-")[2:])
 
     def get_benchmark(name):
-        base = name.split("_")[0]
-        # print(f"[Benchmark] Processing: {name} -> Benchmark: {base}")
-        return base
+        return name.split("_")[0]
 
+    cache_prefixes = ["LLC", "DTLB", "ITLB", "L1D", "L1I", "L2C", "STLB"]
+    branch_type_cols = [
+        "direct_jumps",
+        "indirect_branches",
+        "conditional_branches",
+        "direct_calls",
+        "indirect_calls",
+        "returns",
+        "other_branches",
+    ]
+    branch_mpki_cols = [
+        "BRANCH_DIRECT_JUMP",
+        "BRANCH_INDIRECT",
+        "BRANCH_CONDITIONAL",
+        "BRANCH_DIRECT_CALL",
+        "BRANCH_INDIRECT_CALL",
+        "BRANCH_RETURN",
+    ]
+
+    # Build cache maps once (used for both synth creation and recomputation)
+    all_latency_denom = {}
+    all_cp_latency = {}
+    all_pollution = {}
+    for prefix in cache_prefixes:
+        all_latency_denom.update(
+            {
+                f"{prefix}_AVERAGE_MISS_LATENCY": f"{prefix}_TOTAL_MISS",
+                f"{prefix}_AVERAGE_WP_MISS_LATENCY": f"{prefix}_POLLUTION_WP_MISS",
+                f"{prefix}_AVERAGE_CP_MISS_LATENCY": f"{prefix}_POLLUTION_CP_MISS",
+                f"{prefix}_AVERAGE_INSTR_MISS_LATENCY": f"{prefix}_INSTR_REQ_MISS",
+                f"{prefix}_AVERAGE_WP_INSTR_MISS_LATENCY": f"{prefix}_INSTR_REQ_WP_MISS",
+                f"{prefix}_AVERAGE_DATA_MISS_LATENCY": f"{prefix}_DATA_REQ_MISS",
+                f"{prefix}_AVERAGE_WP_DATA_MISS_LATENCY": f"{prefix}_DATA_REQ_WP_MISS",
+            }
+        )
+        all_cp_latency.update(
+            {
+                f"{prefix}_AVERAGE_CP_INSTR_MISS_LATENCY": (
+                    f"{prefix}_INSTR_REQ_MISS",
+                    f"{prefix}_INSTR_REQ_WP_MISS",
+                ),
+                f"{prefix}_AVERAGE_CP_DATA_MISS_LATENCY": (
+                    f"{prefix}_DATA_REQ_MISS",
+                    f"{prefix}_DATA_REQ_WP_MISS",
+                ),
+            }
+        )
+        all_pollution[f"{prefix}_POLLUTION_AVG_POLLUTION"] = (
+            f"{prefix}_POLLUTION_SAMPLES"
+        )
+
+    # --- Step 1: Extract metadata ---
     temp_df = df.copy()
     temp_df["Weight"] = temp_df.index.map(get_weight)
     temp_df["Algorithm"] = temp_df.index.map(get_algorithm)
     temp_df["BaseBenchmark"] = temp_df.index.map(get_benchmark)
 
-    # Get all numeric metric columns
-    metric_cols = temp_df.select_dtypes(include="number").columns.difference(["Weight"])
+    # Warn about zero weights
+    zero_weight_rows = temp_df[temp_df["Weight"] == 0]
+    if not zero_weight_rows.empty:
+        warnings.warn(
+            f"Unknown simpoints with weight 0 (will be dropped from merge): "
+            f"{list(zero_weight_rows.index)}"
+        )
 
-    # Weight the metrics
+    # Sum Simulation_Time without weighting (total wall-clock time across simpoints)
+    sim_time_sums = None
+    if "Simulation_Time" in temp_df.columns:
+        sim_time_sums = (
+            temp_df.groupby(["BaseBenchmark", "Algorithm"])["Simulation_Time"]
+            .sum()
+            .reset_index()
+        )
+        temp_df = temp_df.drop(columns=["Simulation_Time"])
+
+    # --- Step 2: Create synthetic numerators for ratio columns ---
+    if all(c in temp_df.columns for c in branch_type_cols):
+        temp_df["_total_branches"] = sum(temp_df[c] for c in branch_type_cols)
+    if "MPKI" in temp_df.columns and "instructions" in temp_df.columns:
+        temp_df["_total_mispredictions"] = (
+            temp_df["MPKI"] * temp_df["instructions"] / 1000
+        )
+
+    ratio_cols = []
+
+    if "IPC" in temp_df.columns:
+        ratio_cols.append("IPC")
+
+    if "MPKI" in temp_df.columns:
+        ratio_cols.append("MPKI")
+
+    if (
+        "Branch_Prediction_Accuracy" in temp_df.columns
+        and "_total_branches" in temp_df.columns
+    ):
+        ratio_cols.append("Branch_Prediction_Accuracy")
+        temp_df["_correct_predictions"] = (
+            temp_df["Branch_Prediction_Accuracy"] * temp_df["_total_branches"] / 100
+        )
+
+    if (
+        "Average_ROB_Occupancy_at_Mispredict" in temp_df.columns
+        and "_total_mispredictions" in temp_df.columns
+    ):
+        ratio_cols.append("Average_ROB_Occupancy_at_Mispredict")
+        temp_df["_total_rob_occupancy"] = (
+            temp_df["Average_ROB_Occupancy_at_Mispredict"]
+            * temp_df["_total_mispredictions"]
+        )
+
+    for col in branch_mpki_cols:
+        if col in temp_df.columns and "instructions" in temp_df.columns:
+            ratio_cols.append(col)
+            temp_df[f"_synth_{col}"] = temp_df[col] * temp_df["instructions"] / 1000
+
+    if "Resteer_Penalty" in temp_df.columns:
+        ratio_cols.append("Resteer_Penalty")
+
+    for lat_col, denom_col in all_latency_denom.items():
+        if lat_col in temp_df.columns and denom_col in temp_df.columns:
+            ratio_cols.append(lat_col)
+            temp_df[f"_synth_{lat_col}"] = temp_df[lat_col] * temp_df[denom_col]
+
+    for lat_col, (miss_col, wp_miss_col) in all_cp_latency.items():
+        if (
+            lat_col in temp_df.columns
+            and miss_col in temp_df.columns
+            and wp_miss_col in temp_df.columns
+        ):
+            ratio_cols.append(lat_col)
+            temp_df[f"_denom_{lat_col}"] = temp_df[miss_col] - temp_df[wp_miss_col]
+            temp_df[f"_synth_{lat_col}"] = (
+                temp_df[lat_col] * temp_df[f"_denom_{lat_col}"]
+            )
+
+    for avg_col, samples_col in all_pollution.items():
+        if avg_col in temp_df.columns and samples_col in temp_df.columns:
+            ratio_cols.append(avg_col)
+            temp_df[f"_synth_{avg_col}"] = temp_df[avg_col] * temp_df[samples_col]
+
+    # --- Step 3: Weight count columns and sum by group ---
+    ratio_cols = [c for c in ratio_cols if c in temp_df.columns]
+
+    metric_cols = temp_df.select_dtypes(include="number").columns.difference(
+        ["Weight"] + ratio_cols
+    )
+
     for col in metric_cols:
         temp_df[col] = temp_df[col] * temp_df["Weight"]
 
-    # Group and sum
     temp_df = (
         temp_df.groupby(["BaseBenchmark", "Algorithm"])[metric_cols].sum().reset_index()
     )
 
-    # Create new Benchmark column
+    # --- Step 4: Recompute ratio columns from weighted sums ---
+    if (
+        "IPC" in ratio_cols
+        and "instructions" in temp_df.columns
+        and "total_cycles" in temp_df.columns
+    ):
+        temp_df["IPC"] = temp_df["instructions"] / temp_df["total_cycles"]
+
+    if (
+        "MPKI" in ratio_cols
+        and "_total_mispredictions" in temp_df.columns
+        and "instructions" in temp_df.columns
+    ):
+        temp_df["MPKI"] = (
+            temp_df["_total_mispredictions"] / temp_df["instructions"] * 1000
+        )
+
+    if (
+        "Branch_Prediction_Accuracy" in ratio_cols
+        and "_correct_predictions" in temp_df.columns
+        and "_total_branches" in temp_df.columns
+    ):
+        temp_df["Branch_Prediction_Accuracy"] = (
+            temp_df["_correct_predictions"] / temp_df["_total_branches"] * 100
+        )
+
+    if (
+        "Average_ROB_Occupancy_at_Mispredict" in ratio_cols
+        and "_total_rob_occupancy" in temp_df.columns
+        and "_total_mispredictions" in temp_df.columns
+    ):
+        temp_df["Average_ROB_Occupancy_at_Mispredict"] = (
+            temp_df["_total_rob_occupancy"] / temp_df["_total_mispredictions"]
+        )
+
+    for col in branch_mpki_cols:
+        synth = f"_synth_{col}"
+        if (
+            col in ratio_cols
+            and synth in temp_df.columns
+            and "instructions" in temp_df.columns
+        ):
+            temp_df[col] = temp_df[synth] / temp_df["instructions"] * 1000
+
+    if (
+        "Resteer_Penalty" in ratio_cols
+        and "Resteer_Events" in temp_df.columns
+        and "total_cycles" in temp_df.columns
+    ):
+        temp_df["Resteer_Penalty"] = (
+            temp_df["Resteer_Events"]
+            * RESTEER_PENALTY_CYCLES
+            / temp_df["total_cycles"]
+            * 100
+        )
+
+    for lat_col, denom_col in all_latency_denom.items():
+        synth = f"_synth_{lat_col}"
+        if synth in temp_df.columns and denom_col in temp_df.columns:
+            temp_df[lat_col] = temp_df[synth] / temp_df[denom_col].replace(
+                0, float("nan")
+            )
+
+    for lat_col in all_cp_latency:
+        synth = f"_synth_{lat_col}"
+        denom_synth = f"_denom_{lat_col}"
+        if synth in temp_df.columns and denom_synth in temp_df.columns:
+            temp_df[lat_col] = temp_df[synth] / temp_df[denom_synth].replace(
+                0, float("nan")
+            )
+
+    for avg_col, samples_col in all_pollution.items():
+        synth = f"_synth_{avg_col}"
+        if synth in temp_df.columns and samples_col in temp_df.columns:
+            temp_df[avg_col] = temp_df[synth] / temp_df[samples_col].replace(
+                0, float("nan")
+            )
+
+    # --- Step 5: Clean up and rebuild index ---
+    drop_cols = [c for c in temp_df.columns if c.startswith("_")]
+    temp_df = temp_df.drop(columns=drop_cols)
+
+    # Restore unweighted Simulation_Time sum
+    if sim_time_sums is not None:
+        temp_df = temp_df.merge(sim_time_sums, on=["BaseBenchmark", "Algorithm"])
+
     temp_df["Benchmark"] = (
         temp_df["BaseBenchmark"] + "-champsim-" + temp_df["Algorithm"]
     )
-
-    # Set as index and clean up
     temp_df = temp_df.set_index("Benchmark").drop(
         columns=["BaseBenchmark", "Algorithm"]
     )
@@ -130,28 +342,24 @@ def calculate_means(df):
     Calculates the geometric mean of the IPC column and the arithmetic mean
     for all other columns, appending both as separate rows.
     """
-    try:
-        # Calculate the arithmetic mean for each column except "IPC"
-        amean_row = {
-            col: (df[col].mean() if col != "IPC" else None) for col in df.columns
-        }
+    if "IPC" not in df.columns:
+        warnings.warn("IPC column missing, skipping mean calculation.")
+        return df
 
-        # Calculate the geometric mean of the IPC column
-        geomean = math.prod(df["IPC"]) ** (1 / len(df["IPC"]))
+    if df.empty:
+        warnings.warn("Empty DataFrame, skipping mean calculation.")
+        return df
 
-        # Prepare the "gmean" row with only the IPC column filled
-        gmean_row = {col: (geomean if col == "IPC" else None) for col in df.columns}
+    amean_row = {col: (df[col].mean() if col != "IPC" else None) for col in df.columns}
 
-        # Append both "amean" and "gmean" rows
-        df.loc["amean"] = amean_row
-        df.loc["gmean"] = gmean_row
+    geomean = math.prod(df["IPC"]) ** (1 / len(df["IPC"]))
 
-        # Ensure "amean" and "gmean" are at the end of the DataFrame
-        df = df.reindex(list(df.index.drop(["amean", "gmean"])) + ["amean", "gmean"])
+    gmean_row = {col: (geomean if col == "IPC" else None) for col in df.columns}
 
-    except ZeroDivisionError:
-        print("Some IPC values are zero, exiting...")
-        exit(1)
+    df.loc["amean"] = amean_row
+    df.loc["gmean"] = gmean_row
+
+    df = df.reindex(list(df.index.drop(["amean", "gmean"])) + ["amean", "gmean"])
 
     return df
 
@@ -194,12 +402,13 @@ def parse_champsim_output(path):
         )
 
 
+def _compile_patterns(pattern_dict):
+    """Pre-compile a dict of {key: pattern_str} into a list of (key, compiled_regex)."""
+    return [(key, re.compile(pattern)) for key, pattern in pattern_dict.items()]
+
+
 def parse_single_file(file_path):
     data = {}
-
-    # Define patterns for key-value pairs
-    patterns = define_cpu_patterns()
-    cache_patterns = define_cache_patterns()
 
     # Read the file and start parsing after "Region of Interest Statistics"
     with open(file_path, "r") as file:
@@ -214,7 +423,7 @@ def parse_single_file(file_path):
             if match:
                 hours, minutes, seconds = map(int, match.groups())
                 sim_time = timedelta(hours=hours, minutes=minutes, seconds=seconds)
-                data["Simulation Time"] = (
+                data["Simulation_Time"] = (
                     sim_time.total_seconds()
                 )  # Store as total seconds
                 continue
@@ -229,8 +438,13 @@ def parse_single_file(file_path):
             break
 
         # Parse each line for the relevant stats
-        parse_cpu_patterns(line, patterns, data)
-        parse_cache_patterns(line, cache_patterns, data)
+        parse_cpu_patterns(line, _compiled_cpu_patterns, data)
+        parse_cache_patterns(line, _compiled_cache_patterns, data)
+
+    if not data:
+        warnings.warn(
+            f"No data parsed from {file_path}. File may be incomplete or missing ROI section."
+        )
 
     # Convert the data dictionary to a DataFrame
     df = pd.DataFrame([data])
@@ -248,7 +462,8 @@ def define_cpu_patterns():
         "wrong_path_insts_skipped": r"wrong_path_insts_skipped: (\d+)",
         "wrong_path_insts_executed": r"wrong_path_insts_executed: (\d+)",
         "instr_foot_print": r"instr_foot_print: (\d+)",
-        "data_foot_print": r"data_foot_print: (\d+)",
+        "data_foot_print": r"(?<!addr_)data_foot_print: (\d+)",
+        "data_addr_foot_print": r"data_addr_foot_print: (\d+)",
         "is_prefetch_insts": r"is_prefetch_insts: (\d+)",
         "is_prefetch_skipped": r"is_prefetch_skipped: (\d+)",
         "Branch_Prediction_Accuracy": r"Branch Prediction Accuracy: ([\d.]+)%",
@@ -265,26 +480,26 @@ def define_cpu_patterns():
         "stores": r"stores: (\d+)",
         "arithmetic": r"arithmetic: (\d+)",
         "total_instructions": r"total_instructions: (\d+)",
-        "Fetch Idle Cycles": r"^Fetch Idle Cycles\s+(\d+)",
-        "Decode Idle Cycles": r"^Decode Idle Cycles\s+(\d+)",
-        "Dispatch Idle Cycles": r"^Dispatch Idle Cycles\s+(\d+)",
-        "Schedule Idle Cycles": r"^Schedule Idle Cycles\s+(\d+)",
-        "Execute Idle Cycles": r"^Execute Idle Cycles\s+(\d+)",
-        "Retire Idle Cycles": r"^Retire Idle Cycles\s+(\d+)",
-        "Fetch Starve Cycles": r"^Fetch Starve Cycles\s+(\d+)",
-        "Decode Starve Cycles": r"^Decode Starve Cycles\s+(\d+)",
-        "Dispatch Starve Cycles": r"^Dispatch Starve Cycles\s+(\d+)",
-        "Schedule Starve Cycles": r"^Schedule Starve Cycles\s+(\d+)",
-        "Execute Starve Cycles": r"^Execute Starve Cycles\s+(\d+)",
-        "Retire Starve Cycles": r"^Retire Starve Cycles\s+(\d+)",
-        "Total Fetch Instructions": r"Total Fetch Instructions\s+(\d+)",
-        "Total Decode Instructions": r"Total Decode Instructions\s+(\d+)",
-        "Total Dispatch Instructions": r"Total Dispatch Instructions\s+(\d+)",
-        "Total Schedule Instructions": r"Total Schedule Instructions\s+(\d+)",
-        "Total Execute Instructions": r"Total Execute Instructions\s+(\d+)",
-        "Total Retire Instructions": r"Total Retire Instructions\s+(\d+)",
-        "Resteer Events": r"Resteer Events (\d+)",
-        "Resteer Penalty": r"Resteer Penalty ([\d.]+)",
+        "Fetch_Idle_Cycles": r"^Fetch Idle Cycles\s+(\d+)",
+        "Decode_Idle_Cycles": r"^Decode Idle Cycles\s+(\d+)",
+        "Dispatch_Idle_Cycles": r"^Dispatch Idle Cycles\s+(\d+)",
+        "Schedule_Idle_Cycles": r"^Schedule Idle Cycles\s+(\d+)",
+        "Execute_Idle_Cycles": r"^Execute Idle Cycles\s+(\d+)",
+        "Retire_Idle_Cycles": r"^Retire Idle Cycles\s+(\d+)",
+        "Fetch_Starve_Cycles": r"^Fetch Starve Cycles\s+(\d+)",
+        "Decode_Starve_Cycles": r"^Decode Starve Cycles\s+(\d+)",
+        "Dispatch_Starve_Cycles": r"^Dispatch Starve Cycles\s+(\d+)",
+        "Schedule_Starve_Cycles": r"^Schedule Starve Cycles\s+(\d+)",
+        "Execute_Starve_Cycles": r"^Execute Starve Cycles\s+(\d+)",
+        "Retire_Starve_Cycles": r"^Retire Starve Cycles\s+(\d+)",
+        "Total_Fetch_Instructions": r"Total Fetch Instructions\s+(\d+)",
+        "Total_Decode_Instructions": r"Total Decode Instructions\s+(\d+)",
+        "Total_Dispatch_Instructions": r"Total Dispatch Instructions\s+(\d+)",
+        "Total_Schedule_Instructions": r"Total Schedule Instructions\s+(\d+)",
+        "Total_Execute_Instructions": r"Total Execute Instructions\s+(\d+)",
+        "Total_Retire_Instructions": r"Total Retire Instructions\s+(\d+)",
+        "Resteer_Events": r"Resteer Events (\d+)",
+        "Resteer_Penalty": r"Resteer Penalty ([\d.]+)",
         "WP_Not_Available_Count": r"WP Not Available Count (\d+) Cycles (\d+) \(([\d.]+)%\)",
         "WP_Not_Available_Cycles": r"WP Not Available Count \d+ Cycles (\d+) \(([\d.]+)%\)",
         "Loads_Count": r"Loads: Count (\d+)",
@@ -331,154 +546,89 @@ def define_cpu_patterns():
 
 def define_cache_patterns():
     """Define regex patterns for capturing cache metrics."""
-    return {
-        # LLC metrics
-        "LLC_TOTAL": r"LLC TOTAL\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "LLC_LOAD": r"LLC LOAD\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "LLC_RFO": r"LLC RFO\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "LLC_PREFETCH_AHM": r"LLC PREFETCH\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "LLC_WRITE": r"LLC WRITE\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "LLC_TRANSLATION": r"LLC TRANSLATION\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "LLC_PREFETCH": r"LLC PREFETCH REQUESTED:\s+(\d+)\s+ISSUED:\s+(\d+)\s+USEFUL:\s+(\d+)\s+USELESS:\s+(\d+)",
-        "LLC_WRONG_PATH": r"LLC WRONG-PATH ACCESS:\s+(\d+)\s+LOAD:\s+(\d+)\s+USEFULL:\s+(\d+)\s+FILL:\s+(\d+)\s+USELESS:\s+(\d+)\s",
-        "LLC_POLLUTION": r"LLC POLLUTION:\s+([\d.]+)\s+WP_FILL:\s+(\d+)\s+WP_MISS:\s+(\d+)\s+CP_FILL:\s+(\d+)\s+CP_MISS:\s+(\d+)",
-        "LLC_INSTR_REQ": r"LLC INSTR REQ:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)\s+WP_REQ:\s+(\d+)\s+WP_HIT:\s+(\d+)\s+WP_MISS:\s+(\d+)",
-        "LLC_AVERAGE_MISS_LATENCY": r"LLC AVERAGE MISS LATENCY:\s+([\d.]+) cycles",
-        "LLC_AVERAGE_WP_MISS_LATENCY": r"LLC AVERAGE WP MISS LATENCY:\s+([\d.]+) cycles",
-        "LLC_AVERAGE_CP_MISS_LATENCY": r"LLC AVERAGE CP MISS LATENCY:\s+([\d.]+) cycles",
-        "LLC_AVERAGE_INSTR_MISS_LATENCY": r"LLC AVERAGE INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "LLC_AVERAGE_WP_INSTR_MISS_LATENCY": r"LLC AVERAGE WP INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "LLC_AVERAGE_CP_INSTR_MISS_LATENCY": r"LLC AVERAGE CP INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "LLC_AVERAGE_DATA_MISS_LATENCY": r"LLC AVERAGE DATA MISS LATENCY:\s+([\d.]+) cycles",
-        "LLC_AVERAGE_WP_DATA_MISS_LATENCY": r"LLC AVERAGE WP DATA MISS LATENCY:\s+([\d.]+) cycles",
-        "LLC_AVERAGE_CP_DATA_MISS_LATENCY": r"LLC AVERAGE CP DATA MISS LATENCY:\s+([\d.]+) cycles",
-        # DTLB metrics
-        "DTLB_TOTAL": r"cpu0_DTLB TOTAL\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "DTLB_LOAD": r"cpu0_DTLB LOAD\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "DTLB_RFO": r"cpu0_DTLB RFO\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "DTLB_PREFETCH_AHM": r"cpu0_DTLB PREFETCH\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "DTLB_WRITE": r"cpu0_DTLB WRITE\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "DTLB_TRANSLATION": r"cpu0_DTLB TRANSLATION\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "DTLB_PREFETCH": r"cpu0_DTLB PREFETCH REQUESTED:\s+(\d+)\s+ISSUED:\s+(\d+)\s+USEFUL:\s+(\d+)\s+USELESS:\s+(\d+)",
-        "DTLB_WRONG_PATH": r"cpu0_DTLB WRONG-PATH ACCESS:\s+(\d+)\s+LOAD:\s+(\d+)\s+USEFULL:\s+(\d+)\s+FILL:\s+(\d+)\s+USELESS:\s+(\d+)\s",
-        "DTLB_POLLUTION": r"cpu0_DTLB POLLUTION:\s+([\d.]+)\s+WP_FILL:\s+(\d+)\s+WP_MISS:\s+(\d+)\s+CP_FILL:\s+(\d+)\s+CP_MISS:\s+(\d+)",
-        "DTLB_INSTR_REQ": r"cpu0_DTLB INSTR REQ:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)\s+WP_REQ:\s+(\d+)\s+WP_HIT:\s+(\d+)\s+WP_MISS:\s+(\d+)",
-        "DTLB_AVERAGE_MISS_LATENCY": r"cpu0_DTLB AVERAGE MISS LATENCY:\s+([\d.]+) cycles",
-        "DTLB_AVERAGE_WP_MISS_LATENCY": r"cpu0_DTLB AVERAGE WP MISS LATENCY:\s+([\d.]+) cycles",
-        "DTLB_AVERAGE_CP_MISS_LATENCY": r"cpu0_DTLB AVERAGE CP MISS LATENCY:\s+([\d.]+) cycles",
-        "DTLB_AVERAGE_INSTR_MISS_LATENCY": r"cpu0_DTLB AVERAGE INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "DTLB_AVERAGE_WP_INSTR_MISS_LATENCY": r"cpu0_DTLB AVERAGE WP INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "DTLB_AVERAGE_CP_INSTR_MISS_LATENCY": r"cpu0_DTLB AVERAGE CP INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "DTLB_AVERAGE_DATA_MISS_LATENCY": r"cpu0_DTLB AVERAGE DATA MISS LATENCY:\s+([\d.]+) cycles",
-        "DTLB_AVERAGE_WP_DATA_MISS_LATENCY": r"cpu0_DTLB AVERAGE WP DATA MISS LATENCY:\s+([\d.]+) cycles",
-        "DTLB_AVERAGE_CP_DATA_MISS_LATENCY": r"cpu0_DTLB AVERAGE CP DATA MISS LATENCY:\s+([\d.]+) cycles",
-        # ITLB metrics
-        "ITLB_TOTAL": r"cpu0_ITLB TOTAL\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "ITLB_LOAD": r"cpu0_ITLB LOAD\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "ITLB_RFO": r"cpu0_ITLB RFO\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "ITLB_PREFETCH_AHM": r"cpu0_ITLB PREFETCH\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "ITLB_WRITE": r"cpu0_ITLB WRITE\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "ITLB_TRANSLATION": r"cpu0_ITLB TRANSLATION\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "ITLB_PREFETCH": r"cpu0_ITLB PREFETCH REQUESTED:\s+(\d+)\s+ISSUED:\s+(\d+)\s+USEFUL:\s+(\d+)\s+USELESS:\s+(\d+)",
-        "ITLB_WRONG_PATH": r"cpu0_ITLB WRONG-PATH ACCESS:\s+(\d+)\s+LOAD:\s+(\d+)\s+USEFULL:\s+(\d+)\s+FILL:\s+(\d+)\s+USELESS:\s+(\d+)\s",
-        "ITLB_POLLUTION": r"cpu0_ITLB POLLUTION:\s+([\d.]+)\s+WP_FILL:\s+(\d+)\s+WP_MISS:\s+(\d+)\s+CP_FILL:\s+(\d+)\s+CP_MISS:\s+(\d+)",
-        "ITLB_INSTR_REQ": r"cpu0_ITLB INSTR REQ:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)\s+WP_REQ:\s+(\d+)\s+WP_HIT:\s+(\d+)\s+WP_MISS:\s+(\d+)",
-        "ITLB_AVERAGE_MISS_LATENCY": r"cpu0_ITLB AVERAGE MISS LATENCY:\s+([\d.]+) cycles",
-        "ITLB_AVERAGE_WP_MISS_LATENCY": r"cpu0_ITLB AVERAGE WP MISS LATENCY:\s+([\d.]+) cycles",
-        "ITLB_AVERAGE_CP_MISS_LATENCY": r"cpu0_ITLB AVERAGE CP MISS LATENCY:\s+([\d.]+) cycles",
-        "ITLB_AVERAGE_INSTR_MISS_LATENCY": r"cpu0_ITLB AVERAGE INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "ITLB_AVERAGE_WP_INSTR_MISS_LATENCY": r"cpu0_ITLB AVERAGE WP INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "ITLB_AVERAGE_CP_INSTR_MISS_LATENCY": r"cpu0_ITLB AVERAGE CP INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "ITLB_AVERAGE_DATA_MISS_LATENCY": r"cpu0_ITLB AVERAGE DATA MISS LATENCY:\s+([\d.]+) cycles",
-        "ITLB_AVERAGE_WP_DATA_MISS_LATENCY": r"cpu0_ITLB AVERAGE WP DATA MISS LATENCY:\s+([\d.]+) cycles",
-        "ITLB_AVERAGE_CP_DATA_MISS_LATENCY": r"cpu0_ITLB AVERAGE CP DATA MISS LATENCY:\s+([\d.]+) cycles",
-        # L1D metrics
-        "L1D_TOTAL": r"cpu0_L1D TOTAL\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L1D_LOAD": r"cpu0_L1D LOAD\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L1D_RFO": r"cpu0_L1D RFO\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L1D_PREFETCH_AHM": r"cpu0_L1D PREFETCH\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L1D_WRITE": r"cpu0_L1D WRITE\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L1D_TRANSLATION": r"cpu0_L1D TRANSLATION\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L1D_PREFETCH": r"cpu0_L1D PREFETCH REQUESTED:\s+(\d+)\s+ISSUED:\s+(\d+)\s+USEFUL:\s+(\d+)\s+USELESS:\s+(\d+)",
-        "L1D_WRONG_PATH": r"cpu0_L1D WRONG-PATH ACCESS:\s+(\d+)\s+LOAD:\s+(\d+)\s+USEFULL:\s+(\d+)\s+FILL:\s+(\d+)\s+USELESS:\s+(\d+)\s",
-        "L1D_POLLUTION": r"cpu0_L1D POLLUTION:\s+([\d.]+)\s+WP_FILL:\s+(\d+)\s+WP_MISS:\s+(\d+)\s+CP_FILL:\s+(\d+)\s+CP_MISS:\s+(\d+)",
-        "L1D_INSTR_REQ": r"cpu0_L1D INSTR REQ:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)\s+WP_REQ:\s+(\d+)\s+WP_HIT:\s+(\d+)\s+WP_MISS:\s+(\d+)",
-        "L1D_AVERAGE_MISS_LATENCY": r"cpu0_L1D AVERAGE MISS LATENCY:\s+([\d.]+) cycles",
-        "L1D_AVERAGE_WP_MISS_LATENCY": r"cpu0_L1D AVERAGE WP MISS LATENCY:\s+([\d.]+) cycles",
-        "L1D_AVERAGE_CP_MISS_LATENCY": r"cpu0_L1D AVERAGE CP MISS LATENCY:\s+([\d.]+) cycles",
-        "L1D_AVERAGE_INSTR_MISS_LATENCY": r"cpu0_L1D AVERAGE INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "L1D_AVERAGE_WP_INSTR_MISS_LATENCY": r"cpu0_L1D AVERAGE WP INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "L1D_AVERAGE_CP_INSTR_MISS_LATENCY": r"cpu0_L1D AVERAGE CP INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "L1D_AVERAGE_DATA_MISS_LATENCY": r"cpu0_L1D AVERAGE DATA MISS LATENCY:\s+([\d.]+) cycles",
-        "L1D_AVERAGE_WP_DATA_MISS_LATENCY": r"cpu0_L1D AVERAGE WP DATA MISS LATENCY:\s+([\d.]+) cycles",
-        "L1D_AVERAGE_CP_DATA_MISS_LATENCY": r"cpu0_L1D AVERAGE CP DATA MISS LATENCY:\s+([\d.]+) cycles",
-        # L1I metrics
-        "L1I_TOTAL": r"cpu0_L1I TOTAL\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L1I_LOAD": r"cpu0_L1I LOAD\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L1I_RFO": r"cpu0_L1I RFO\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L1I_PREFETCH_AHM": r"cpu0_L1I PREFETCH\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L1I_WRITE": r"cpu0_L1I WRITE\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L1I_TRANSLATION": r"cpu0_L1I TRANSLATION\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L1I_PREFETCH": r"cpu0_L1I PREFETCH REQUESTED:\s+(\d+)\s+ISSUED:\s+(\d+)\s+USEFUL:\s+(\d+)\s+USELESS:\s+(\d+)",
-        "L1I_WRONG_PATH": r"cpu0_L1I WRONG-PATH ACCESS:\s+(\d+)\s+LOAD:\s+(\d+)\s+USEFULL:\s+(\d+)\s+FILL:\s+(\d+)\s+USELESS:\s+(\d+)\s",
-        "L1I_POLLUTION": r"cpu0_L1I POLLUTION:\s+([\d.]+)\s+WP_FILL:\s+(\d+)\s+WP_MISS:\s+(\d+)\s+CP_FILL:\s+(\d+)\s+CP_MISS:\s+(\d+)",
-        "L1I_INSTR_REQ": r"cpu0_L1I INSTR REQ:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)\s+WP_REQ:\s+(\d+)\s+WP_HIT:\s+(\d+)\s+WP_MISS:\s+(\d+)",
-        "L1I_AVERAGE_MISS_LATENCY": r"cpu0_L1I AVERAGE MISS LATENCY:\s+([\d.]+) cycles",
-        "L1I_AVERAGE_WP_MISS_LATENCY": r"cpu0_L1I AVERAGE WP MISS LATENCY:\s+([\d.]+) cycles",
-        "L1I_AVERAGE_CP_MISS_LATENCY": r"cpu0_L1I AVERAGE CP MISS LATENCY:\s+([\d.]+) cycles",
-        "L1I_AVERAGE_INSTR_MISS_LATENCY": r"cpu0_L1I AVERAGE INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "L1I_AVERAGE_WP_INSTR_MISS_LATENCY": r"cpu0_L1I AVERAGE WP INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "L1I_AVERAGE_CP_INSTR_MISS_LATENCY": r"cpu0_L1I AVERAGE CP INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "L1I_AVERAGE_DATA_MISS_LATENCY": r"cpu0_L1I AVERAGE DATA MISS LATENCY:\s+([\d.]+) cycles",
-        "L1I_AVERAGE_WP_DATA_MISS_LATENCY": r"cpu0_L1I AVERAGE WP DATA MISS LATENCY:\s+([\d.]+) cycles",
-        "L1I_AVERAGE_CP_DATA_MISS_LATENCY": r"cpu0_L1I AVERAGE CP DATA MISS LATENCY:\s+([\d.]+) cycles",
-        # L2C metrics
-        "L2C_TOTAL": r"cpu0_L2C TOTAL\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L2C_LOAD": r"cpu0_L2C LOAD\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L2C_RFO": r"cpu0_L2C RFO\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L2C_PREFETCH_AHM": r"cpu0_L2C PREFETCH\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L2C_WRITE": r"cpu0_L2C WRITE\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L2C_TRANSLATION": r"cpu0_L2C TRANSLATION\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "L2C_PREFETCH": r"cpu0_L2C PREFETCH REQUESTED:\s+(\d+)\s+ISSUED:\s+(\d+)\s+USEFUL:\s+(\d+)\s+USELESS:\s+(\d+)",
-        "L2C_WRONG_PATH": r"cpu0_L2C WRONG-PATH ACCESS:\s+(\d+)\s+LOAD:\s+(\d+)\s+USEFULL:\s+(\d+)\s+FILL:\s+(\d+)\s+USELESS:\s+(\d+)\s",
-        "L2C_POLLUTION": r"cpu0_L2C POLLUTION:\s+([\d.]+)\s+WP_FILL:\s+(\d+)\s+WP_MISS:\s+(\d+)\s+CP_FILL:\s+(\d+)\s+CP_MISS:\s+(\d+)",
-        "L2C_INSTR_REQ": r"cpu0_L2C INSTR REQ:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)\s+WP_REQ:\s+(\d+)\s+WP_HIT:\s+(\d+)\s+WP_MISS:\s+(\d+)",
-        "L2C_AVERAGE_MISS_LATENCY": r"cpu0_L2C AVERAGE MISS LATENCY:\s+([\d.]+) cycles",
-        "L2C_AVERAGE_WP_MISS_LATENCY": r"cpu0_L2C AVERAGE WP MISS LATENCY:\s+([\d.]+) cycles",
-        "L2C_AVERAGE_CP_MISS_LATENCY": r"cpu0_L2C AVERAGE CP MISS LATENCY:\s+([\d.]+) cycles",
-        "L2C_AVERAGE_INSTR_MISS_LATENCY": r"cpu0_L2C AVERAGE INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "L2C_AVERAGE_WP_INSTR_MISS_LATENCY": r"cpu0_L2C AVERAGE WP INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "L2C_AVERAGE_CP_INSTR_MISS_LATENCY": r"cpu0_L2C AVERAGE CP INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "L2C_AVERAGE_DATA_MISS_LATENCY": r"cpu0_L2C AVERAGE DATA MISS LATENCY:\s+([\d.]+) cycles",
-        "L2C_AVERAGE_WP_DATA_MISS_LATENCY": r"cpu0_L2C AVERAGE WP DATA MISS LATENCY:\s+([\d.]+) cycles",
-        "L2C_AVERAGE_CP_DATA_MISS_LATENCY": r"cpu0_L2C AVERAGE CP DATA MISS LATENCY:\s+([\d.]+) cycles",
-        # STLB metrics
-        "STLB_TOTAL": r"cpu0_STLB TOTAL\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "STLB_LOAD": r"cpu0_STLB LOAD\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "STLB_RFO": r"cpu0_STLB RFO\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "STLB_PREFETCH_AHM": r"cpu0_STLB PREFETCH\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "STLB_WRITE": r"cpu0_STLB WRITE\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "STLB_TRANSLATION": r"cpu0_STLB TRANSLATION\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)",
-        "STLB_PREFETCH": r"cpu0_STLB PREFETCH REQUESTED:\s+(\d+)\s+ISSUED:\s+(\d+)\s+USEFUL:\s+(\d+)\s+USELESS:\s+(\d+)",
-        "STLB_WRONG_PATH": r"cpu0_STLB WRONG-PATH ACCESS:\s+(\d+)\s+LOAD:\s+(\d+)\s+USEFULL:\s+(\d+)\s+FILL:\s+(\d+)\s+USELESS:\s+(\d+)\s",
-        "STLB_POLLUTION": r"cpu0_STLB POLLUTION:\s+([\d.]+)\s+WP_FILL:\s+(\d+)\s+WP_MISS:\s+(\d+)\s+CP_FILL:\s+(\d+)\s+CP_MISS:\s+(\d+)",
-        "STLB_INSTR_REQ": r"cpu0_STLB INSTR REQ:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)\s+WP_REQ:\s+(\d+)\s+WP_HIT:\s+(\d+)\s+WP_MISS:\s+(\d+)",
-        "STLB_AVERAGE_MISS_LATENCY": r"cpu0_STLB AVERAGE MISS LATENCY:\s+([\d.]+) cycles",
-        "STLB_AVERAGE_WP_MISS_LATENCY": r"cpu0_STLB AVERAGE WP MISS LATENCY:\s+([\d.]+) cycles",
-        "STLB_AVERAGE_CP_MISS_LATENCY": r"cpu0_STLB AVERAGE CP MISS LATENCY:\s+([\d.]+) cycles",
-        "STLB_AVERAGE_INSTR_MISS_LATENCY": r"cpu0_STLB AVERAGE INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "STLB_AVERAGE_WP_INSTR_MISS_LATENCY": r"cpu0_STLB AVERAGE WP INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "STLB_AVERAGE_CP_INSTR_MISS_LATENCY": r"cpu0_STLB AVERAGE CP INSTR MISS LATENCY:\s+([\d.]+) cycles",
-        "STLB_AVERAGE_DATA_MISS_LATENCY": r"cpu0_STLB AVERAGE DATA MISS LATENCY:\s+([\d.]+) cycles",
-        "STLB_AVERAGE_WP_DATA_MISS_LATENCY": r"cpu0_STLB AVERAGE WP DATA MISS LATENCY:\s+([\d.]+) cycles",
-        "STLB_AVERAGE_CP_DATA_MISS_LATENCY": r"cpu0_STLB AVERAGE CP DATA MISS LATENCY:\s+([\d.]+) cycles",
-    }
+    caches = [
+        ("LLC", "LLC"),
+        ("DTLB", "cpu0_DTLB"),
+        ("ITLB", "cpu0_ITLB"),
+        ("L1D", "cpu0_L1D"),
+        ("L1I", "cpu0_L1I"),
+        ("L2C", "cpu0_L2C"),
+        ("STLB", "cpu0_STLB"),
+    ]
+    ahm = r"\s+ACCESS:\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)"
+    req = r":\s+(\d+)\s+HIT:\s+(\d+)\s+MISS:\s+(\d+)\s+WP_REQ:\s+(\d+)\s+WP_HIT:\s+(\d+)\s+WP_MISS:\s+(\d+)"
+
+    patterns = {}
+    for prefix, name in caches:
+        # ACCESS/HIT/MISS patterns
+        for metric in ["TOTAL", "LOAD", "RFO", "WRITE", "TRANSLATION"]:
+            patterns[f"{prefix}_{metric}"] = rf"{name} {metric}{ahm}"
+        patterns[f"{prefix}_PREFETCH_AHM"] = rf"{name} PREFETCH{ahm}"
+
+        # PREFETCH REQUESTED/ISSUED/USEFUL/USELESS
+        patterns[f"{prefix}_PREFETCH"] = (
+            rf"{name} PREFETCH REQUESTED:\s+(\d+)\s+ISSUED:\s+(\d+)"
+            rf"\s+USEFUL:\s+(\d+)\s+USELESS:\s+(\d+)"
+        )
+
+        # WRONG-PATH
+        patterns[f"{prefix}_WRONG_PATH"] = (
+            rf"{name} WRONG-PATH ACCESS:\s+(\d+)\s+LOAD:\s+(\d+)"
+            rf"\s+USEFULL:\s+(\d+)\s+FILL:\s+(\d+)\s+USELESS:\s+(\d+)\s"
+        )
+
+        # POLLUTION
+        patterns[f"{prefix}_POLLUTION"] = (
+            rf"{name} POLLUTION:\s+([\d.]+)\s+SAMPLES:\s+(\d+)"
+            rf"\s+WP_FILL:\s+(\d+)\s+WP_MISS:\s+(\d+)"
+            rf"\s+CP_FILL:\s+(\d+)\s+CP_MISS:\s+(\d+)"
+        )
+
+        # INSTR REQ / DATA REQ
+        patterns[f"{prefix}_INSTR_REQ"] = rf"{name} INSTR REQ{req}"
+        patterns[f"{prefix}_DATA_REQ"] = rf"{name} DATA REQ{req}"
+
+        # AVERAGE LATENCY variants
+        latency_types = [
+            "MISS",
+            "WP MISS",
+            "CP MISS",
+            "INSTR MISS",
+            "WP INSTR MISS",
+            "CP INSTR MISS",
+            "DATA MISS",
+            "WP DATA MISS",
+            "CP DATA MISS",
+        ]
+        for lt in latency_types:
+            key_suffix = lt.replace(" ", "_")
+            patterns[f"{prefix}_AVERAGE_{key_suffix}_LATENCY"] = (
+                rf"{name} AVERAGE {lt} LATENCY:\s+([\d.]+) cycles"
+            )
+
+    return patterns
 
 
-def parse_cpu_patterns(line, patterns, data):
+_compiled_cpu_patterns = _compile_patterns(define_cpu_patterns())
+_compiled_cache_patterns = _compile_patterns(define_cache_patterns())
+
+_PREFETCH_FIELDS = ["REQUESTED", "ISSUED", "USEFUL", "USELESS"]
+_WRONG_PATH_FIELDS = ["ACCESS", "LOAD", "USEFULL", "FILL", "USELESS"]
+_POLLUTION_FIELDS = [
+    "AVG_POLLUTION",
+    "SAMPLES",
+    "WP_FILL",
+    "WP_MISS",
+    "CP_FILL",
+    "CP_MISS",
+]
+_REQ_FIELDS = ["REQ", "HIT", "MISS", "WP_REQ", "WP_HIT", "WP_MISS"]
+
+
+def parse_cpu_patterns(line, compiled_patterns, data):
     """Parse initial stats patterns and update the data dictionary."""
-    for key, pattern in patterns.items():
-        match = re.search(pattern, line)
+    for key, pattern in compiled_patterns:
+        match = pattern.search(line)
         if match:
             try:
                 data[key] = float(match.group(1))
@@ -486,89 +636,36 @@ def parse_cpu_patterns(line, patterns, data):
                 raise ValueError(f"Failed to parse {key} in line: {line}")
 
 
-def parse_cache_patterns(line, cache_patterns, data):
+def parse_cache_patterns(line, compiled_cache_patterns, data):
     """Parse cache patterns and update the data dictionary with access, hits, and misses."""
-    for key, pattern in cache_patterns.items():
-        match = re.search(pattern, line)
+    for key, pattern in compiled_cache_patterns:
+        match = pattern.search(line)
         if match:
-            if (
-                key.endswith("AVERAGE_MISS_LATENCY")
-                or key.endswith("AVERAGE_WP_MISS_LATENCY")
-                or key.endswith("AVERAGE_CP_MISS_LATENCY")
-                or key.endswith("AVERAGE_INSTR_MISS_LATENCY")
-                or key.endswith("AVERAGE_WP_INSTR_MISS_LATENCY")
-                or key.endswith("AVERAGE_CP_INSTR_MISS_LATENCY")
-                or key.endswith("AVERAGE_DATA_MISS_LATENCY")
-                or key.endswith("AVERAGE_WP_DATA_MISS_LATENCY")
-                or key.endswith("AVERAGE_CP_DATA_MISS_LATENCY")
-            ):
-                # Handle average miss latency metrics
+            cache_type = key.split("_")[0]
+            if key.endswith("LATENCY"):
                 data[key] = float(match.group(1))
-
             elif key.endswith("PREFETCH_AHM"):
-                # Handle PREFETCH ACCESS/HIT/MISS patterns
                 access, hits, miss = map(int, match.groups())
-                cache_type = key.split("_")[0]  # Extract the cache type, e.g., "LLC"
                 data[f"{cache_type}_PREFETCH_ACCESS"] = access
                 data[f"{cache_type}_PREFETCH_HIT"] = hits
                 data[f"{cache_type}_PREFETCH_MISS"] = miss
-
             elif key.endswith("PREFETCH"):
-                # Handle PREFETCH REQUESTED/ISSUED/USEFUL/USELESS patterns
-                requested, issued, useful, useless = map(int, match.groups())
-                cache_type = key.split("_")[0]  # Extract the cache type, e.g., "LLC"
-                data[f"{cache_type}_PREFETCH_REQUESTED"] = requested
-                data[f"{cache_type}_PREFETCH_ISSUED"] = issued
-                data[f"{cache_type}_PREFETCH_USEFUL"] = useful
-                data[f"{cache_type}_PREFETCH_USELESS"] = useless
-
+                for field, val in zip(_PREFETCH_FIELDS, map(int, match.groups())):
+                    data[f"{cache_type}_PREFETCH_{field}"] = val
             elif key.endswith("WRONG_PATH"):
-                # Handle WRONG-PATH metrics
-                values = list(map(int, match.groups()))
-                wrong_path_fields = [
-                    "ACCESS",
-                    "LOAD",
-                    "USEFULL",
-                    "FILL",
-                    "USELESS",
-                ]
-                cache_type = key.split("_")[0]  # Extract the cache type, e.g., "LLC"
-                for i, field in enumerate(wrong_path_fields):
-                    data[f"{cache_type}_WRONG_PATH_{field}"] = values[i]
-
+                for field, val in zip(_WRONG_PATH_FIELDS, map(int, match.groups())):
+                    data[f"{cache_type}_WRONG_PATH_{field}"] = val
             elif key.endswith("POLLUTION"):
-                # Handle POLLUTION metrics
-                values = list(map(float, match.groups()))
-                pollution_fields = [
-                    "POLLUTION",
-                    "WP_FILL",
-                    "WP_MISS",
-                    "CP_FILL",
-                    "CP_MISS",
-                ]
-                cache_type = key.split("_")[0]  # Extract the cache type, e.g., "LLC"
-                for i, field in enumerate(pollution_fields):
-                    data[f"{cache_type}_POLLUTION_{field}"] = values[i]
-
-            elif key.endswith("INSTR_REQ"):
-                # Handle INSTR REQ metrics
-                values = list(map(int, match.groups()))
-                instr_req_fields = [
-                    "INSTR_REQ",
-                    "HIT",
-                    "MISS",
-                    "WP_REQ",
-                    "WP_HIT",
-                    "WP_MISS",
-                ]
-                cache_type = key.split("_")[0]  # Extract the cache type, e.g., "LLC"
-                for i, field in enumerate(instr_req_fields):
-                    data[f"{cache_type}_INSTR_REQ_{field}"] = values[i]
-
+                for field, val in zip(_POLLUTION_FIELDS, map(float, match.groups())):
+                    data[f"{cache_type}_POLLUTION_{field}"] = val
+            elif key.endswith("INSTR_REQ") or key.endswith("DATA_REQ"):
+                req_type = "INSTR_REQ" if key.endswith("INSTR_REQ") else "DATA_REQ"
+                for field, val in zip(_REQ_FIELDS, map(int, match.groups())):
+                    data[f"{cache_type}_{req_type}_{field}"] = val
             else:
-                # Handle general ACCESS/HIT/MISS patterns for TOTAL, LOAD, RFO, WRITE, TRANSLATION
+                _, metric_type = key.split("_", 1)
                 access, hits, miss = map(int, match.groups())
-                cache_type, metric_type = key.split("_", 1)
                 data[f"{cache_type}_{metric_type}_ACCESS"] = access
                 data[f"{cache_type}_{metric_type}_HITS"] = hits
                 data[f"{cache_type}_{metric_type}_MISS"] = miss
+            break

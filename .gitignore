@@ -11,6 +11,9 @@ results/
 jobs.log
 jobs/*.bak
 
+analysis/html
+analysis/pdf
+
 **/*.o
 **/*.d
 
