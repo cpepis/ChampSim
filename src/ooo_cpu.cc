@@ -726,19 +726,19 @@ long O3_CPU::schedule_instruction()
   }
 
   for (auto rob_it = std::begin(ROB); rob_it != std::end(ROB) && search_bw > 0; ++rob_it) {
-    // Ensure there are enough registers free
-    unsigned long sources_to_allocate = std::count_if(rob_it->source_registers.begin(), rob_it->source_registers.end(),
-                                                      [&alloc = std::as_const(reg_allocator)](auto srcreg) { return !alloc.isAllocated(srcreg); });
-    if (reg_allocator.count_free_registers() < (sources_to_allocate + rob_it->destination_registers.size())) {
-      break;
-    }
-
-    if (!rob_it->is_wrong_path && reg_allocator.inWrongPath()) {
-      // We've hit the first non-WP instruction, restore the frontend register file
-      reg_allocator.restore_frontend_RAT();
-    }
-    
     if (rob_it->scheduled == 0) {
+      // Ensure there are enough registers free
+      unsigned long sources_to_allocate = std::count_if(rob_it->source_registers.begin(), rob_it->source_registers.end(),
+                                                        [&alloc = std::as_const(reg_allocator)](auto srcreg) { return !alloc.isAllocated(srcreg); });
+      if (reg_allocator.count_free_registers() < (sources_to_allocate + rob_it->destination_registers.size())) {
+        break;
+      }
+
+      if (!rob_it->is_wrong_path && reg_allocator.inWrongPath()) {
+        // We've hit the first non-WP instruction, restore the frontend register file
+        reg_allocator.restore_frontend_RAT();
+      }
+    
       do_scheduling(*rob_it);
       ++progress;
       sim_stats.total_schedule_instructions++;
